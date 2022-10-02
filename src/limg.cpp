@@ -142,7 +142,7 @@ struct limg_encode_context
   const uint32_t *pSourceImage;
   uint32_t *pBlockInfo;
   size_t sizeX, sizeY;
-  int32_t maxPixelError, maxBlockError, maxChannelError, maxBlockExpandError;
+  size_t maxPixelError, maxBlockError, maxChannelError, maxBlockExpandError;
   bool hasAlpha;
 };
 
@@ -152,14 +152,29 @@ struct limg_ui8_4
 
   inline uint8_t &operator[](const size_t index) { return v[index]; }
   inline const uint8_t &operator[](const size_t index) const { return v[index]; }
+
+  inline bool equals_w_alpha(const limg_ui8_4 &other)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && v[3] == other[3];
+  }
+
+  inline bool equals_wo_alpha(const limg_ui8_4 &other)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2];
+  }
+
+  inline bool equals(const limg_ui8_4 &other, const bool hasAlpha)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && (hasAlpha || v[3] == other[3]);
+  }
 };
 
 static_assert(sizeof(limg_ui8_4) == 4, "Invalid Configuration");
 
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
-constexpr size_t limg_MinBlockSize = 4;
-constexpr size_t limg_BlockExpandStep = 2;
+constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
+constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 2;
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -259,15 +274,15 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
 
         if constexpr (CheckBounds)
           for (size_t i = 0; i < channels; i++)
-            if ((int32_t)px[i] < a[i] - pCtx->maxChannelError || (int32_t)px[i] > b[i] + pCtx->maxChannelError)
+            if ((int64_t)px[i] < a[i] - (int64_t)pCtx->maxChannelError || (int64_t)px[i] > b[i] + (int64_t)pCtx->maxChannelError)
               return false;
 
-        float fac[channels];
+        float offset[channels];
         
         for (size_t i = 0; i < channels; i++)
-          fac[i] = (float)(px[i] - a[i]);
+          offset[i] = (float)(px[i] - a[i]);
 
-        const float avg = (fac[0] + fac[1] + fac[2] + fac[3]) * inverse_dist_complete_or_one; // R G B A.
+        const float avg = (offset[0] + offset[1] + offset[2] + offset[3]) * inverse_dist_complete_or_one; // R G B A.
 
         if constexpr (WriteToFactors)
         {
@@ -276,12 +291,19 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
         }
 
         size_t error = 0;
+        size_t lum = 0;
 
         for (size_t i = 0; i < channels; i++)
         {
-          const size_t e = (size_t)(0.5f + fabsf((fac[i] / dist_or_one[i] - avg) * dist[i]));
+          const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one[i] - avg) * dist[i]));
           error += e * e;
+          lum += px[i];
         }
+
+        size_t ilum = 0xFF * channels - lum;
+        ilum *= ilum;
+        lum = limgMin(1, ilum >> 16);
+        error = lum * error;
 
         if constexpr (CheckPixelError)
           if (error > pCtx->maxPixelError)
@@ -322,15 +344,15 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
 
         if constexpr (CheckBounds)
           for (size_t i = 0; i < channels; i++)
-            if ((int32_t)px[i] < a[i] - pCtx->maxChannelError || (int32_t)px[i] > b[i] + pCtx->maxChannelError)
+            if ((int64_t)px[i] < a[i] - (int64_t)pCtx->maxChannelError || (int64_t)px[i] > b[i] + (int64_t)pCtx->maxChannelError)
               return false;
 
-        float fac[channels];
+        float offset[channels];
 
         for (size_t i = 0; i < channels; i++)
-          fac[i] = (float)(px[i] - a[i]);
+          offset[i] = (float)(px[i] - a[i]);
 
-        const float avg = (fac[0] + fac[1] + fac[2]) * inverse_dist_complete_or_one; // R G B.
+        const float avg = (offset[0] + offset[1] + offset[2]) * inverse_dist_complete_or_one; // R G B.
 
         if constexpr (WriteToFactors)
         {
@@ -339,12 +361,19 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
         }
 
         size_t error = 0;
+        size_t lum = 0;
 
         for (size_t i = 0; i < channels; i++)
         {
-          const size_t e = (size_t)(0.5f + fabsf((fac[i] / dist_or_one[i] - avg) * dist[i]));
+          const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one[i] - avg) * dist[i]));
           error += e * e;
+          lum += px[i];
         }
+
+        size_t ilum = 0xFF * channels - lum;
+        ilum *= ilum;
+        lum = limgMin(1, ilum >> 16);
+        error = lum * error;
 
         if constexpr (CheckPixelError)
           if (error > pCtx->maxPixelError)
@@ -354,6 +383,8 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
       }
     }
   }
+
+  blockError /= (rangeX * rangeY);
 
   if constexpr (WriteBlockError)
     *pBlockError = blockError;
@@ -420,12 +451,19 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
           const float avg_offset = (offset[0] + offset[1] + offset[2]) / dist_complete_or_one_px;
 
           size_t error = 0;
+          size_t lum = 0;
 
           for (size_t i = 0; i < channels; i++)
           {
             const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
             error += e * e;
+            lum += px[i];
           }
+
+          size_t ilum = 0xFF * channels - lum;
+          ilum *= ilum;
+          lum = limgMin(1, ilum >> 16);
+          error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
             return false;
@@ -473,12 +511,19 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
             const float avg_offset = (offset[0] + offset[1] + offset[2] + offset[3]) / dist_complete_or_one_px; // R G B A.
 
             size_t error = 0;
+            size_t lum = 0;
 
             for (size_t i = 0; i < channels; i++)
             {
               const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
               error += e * e;
+              lum += px[i];
             }
+
+            size_t ilum = 0xFF * channels - lum;
+            ilum *= ilum;
+            lum = limgMin(1, ilum >> 16);
+            error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
               return false;
@@ -540,12 +585,19 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
           const float avg_offset = (offset[0] + offset[1] + offset[2]) / dist_complete_or_one_px;
 
           size_t error = 0;
+          size_t lum = 0;
 
           for (size_t i = 0; i < channels; i++)
           {
             const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
             error += e * e;
+            lum += px[i];
           }
+
+          size_t ilum = 0xFF * channels - lum;
+          ilum *= ilum;
+          lum = limgMin(1, ilum >> 16);
+          error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
             return false;
@@ -592,12 +644,19 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
             const float avg_offset = (offset[0] + offset[1] + offset[2]) / dist_complete_or_one_px; // R G B.
 
             size_t error = 0;
+            size_t lum = 0;
 
             for (size_t i = 0; i < channels; i++)
             {
               const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
               error += e * e;
+              lum += px[i];
             }
+
+            size_t ilum = 0xFF * channels - lum;
+            ilum *= ilum;
+            lum = limgMin(1, ilum >> 16);
+            error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
               return false;
@@ -717,17 +776,12 @@ static void limg_encode_get_block_min_max(limg_encode_context *pCtx, const size_
   }
 }
 
-bool limg_encode_find_block_from_center(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB)
+bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB)
 {
   int64_t ox = *pOffsetX;
   int64_t oy = *pOffsetY;
   int64_t rx = *pRangeX;
   int64_t ry = *pRangeY;
-
-  ox += rx / 2 - limg_MinBlockSize / 2;
-  oy += ry / 2 - limg_MinBlockSize / 2;
-  rx = limg_MinBlockSize;
-  ry = limg_MinBlockSize;
 
   bool canGrowUp = true;
   bool canGrowDown = true;
@@ -746,68 +800,83 @@ bool limg_encode_find_block_from_center(limg_encode_context *pCtx, size_t *pOffs
   limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
 
   if (!limg_encode_check_area<false, false, true, true>(pCtx, ox, oy, rx, ry, a, b, nullptr, nullptr))
-  {
-    //__debugbreak(); // This function should've only been called if this was true, so... eh...
     return false;
-  }
 
   while (canGrowUp || canGrowDown || canGrowLeft || canGrowRight)
   {
     if (canGrowRight)
     {
       const int64_t newRx = limgMin(rx + limg_BlockExpandStep, pCtx->sizeX - ox);
+      limg_ui8_4 newA = a;
+      limg_ui8_4 newB = b;
 
-      if (newRx == rx || !limg_encode_attempt_include_unused_pixels(pCtx, ox + rx, oy, newRx - rx, ry, a, b))
+      if (newRx == rx || !limg_encode_attempt_include_unused_pixels(pCtx, ox + rx, oy, newRx - rx, ry, newA, newB) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, oy, newRx, ry, newA, newB, nullptr, nullptr)))
       {
         canGrowRight = false;
       }
       else
       {
         rx = newRx;
+        a = newA;
+        b = newB;
       }
     }
 
     if (canGrowDown)
     {
       const int64_t newRy = limgMin(ry + limg_BlockExpandStep, pCtx->sizeY - oy);
+      limg_ui8_4 newA = a;
+      limg_ui8_4 newB = b;
 
-      if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, ox, oy + ry, rx, newRy - ry, a, b))
+      if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, ox, oy + ry, rx, newRy - ry, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, oy, rx, newRy, newA, newB, nullptr, nullptr)))
       {
         canGrowDown = false;
       }
       else
       {
         ry = newRy;
+        a = newA;
+        b = newB;
       }
     }
 
     if (canGrowUp)
     {
       const int64_t newOx = limgMax(0LL, ox - (int64_t)limg_BlockExpandStep);
+      const int64_t newRx = rx + (ox - newOx);
+      limg_ui8_4 newA = a;
+      limg_ui8_4 newB = b;
 
-      if (newOx == ox || !limg_encode_attempt_include_unused_pixels(pCtx, newOx, oy, ox - newOx, ry, a, b))
+      if (newOx == ox || !limg_encode_attempt_include_unused_pixels(pCtx, newOx, oy, ox - newOx, ry, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, newOx, oy, newRx, ry, newA, newB, nullptr, nullptr)))
       {
         canGrowUp = false;
       }
       else
       {
-        rx += ox - newOx;
+        rx = newRx;
         ox = newOx;
+        a = newA;
+        b = newB;
       }
     }
 
     if (canGrowLeft)
     {
       const int64_t newOy = limgMax(0LL, oy - (int64_t)limg_BlockExpandStep);
+      const int64_t newRy = ry + (oy - newOy);
+      limg_ui8_4 newA = a;
+      limg_ui8_4 newB = b;
 
-      if (newOy == oy || !limg_encode_attempt_include_unused_pixels(pCtx, ox, newOy, rx, oy - newOy, a, b))
+      if (newOy == oy || !limg_encode_attempt_include_unused_pixels(pCtx, ox, newOy, rx, oy - newOy, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, newOy, rx, newRy, newA, newB, nullptr, nullptr)))
       {
         canGrowLeft = false;
       }
       else
       {
-        ry += oy - newOy;
+        ry = newRy;
         oy = newOy;
+        a = newA;
+        b = newB;
       }
     }
   }
@@ -824,11 +893,11 @@ bool limg_encode_find_block_from_center(limg_encode_context *pCtx, size_t *pOffs
 
 bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &staticY, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB)
 {
-  for (; staticY < pCtx->sizeY; staticY++)
+  for (; staticY < pCtx->sizeY; staticY += limg_BlockExpandStep)
   {
     const uint32_t *pBlockInfoLine = &pCtx->pBlockInfo[staticY * pCtx->sizeX];
 
-    for (; staticX < pCtx->sizeX; staticX++)
+    for (; staticX < pCtx->sizeX; staticX += limg_BlockExpandStep)
     {
       if (!!(pBlockInfoLine[staticX] & BlockInfo_InUse))
         continue;
@@ -848,66 +917,49 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
       if (!limg_encode_check_area<false, false, true, true>(pCtx, staticX, staticY, rx, ry, a, b, nullptr, nullptr))
         continue;
 
-      while (true)
+      bool seekX = true;
+      bool seekY = true;
+
+      while (seekX || seekY)
       {
-        const size_t newRx = limgMin(rx + limg_BlockExpandStep, maxRx);
+        if (seekX)
+        {
+          const size_t newRx = limgMin(rx + limg_BlockExpandStep, maxRx);
 
-        if (newRx == rx || !limg_encode_attempt_include_unused_pixels(pCtx, staticX + rx, staticY, newRx - rx, ry, a, b))
-          goto only_seek_y;
+          if (newRx == rx || !limg_encode_attempt_include_unused_pixels(pCtx, staticX + rx, staticY, newRx - rx, ry, a, b))
+            seekX = false;
+          else
+            rx = newRx;
+        }
 
-        rx = newRx;
+        if (seekY)
+        {
+          const size_t newRy = limgMin(ry + limg_BlockExpandStep, maxRy);
 
-        const size_t newRy = limgMin(ry + limg_BlockExpandStep, maxRy);
-
-        if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, staticX, staticY + ry, rx, newRy - ry, a, b))
-          goto only_seek_x;
-
-        ry = newRy;
+          if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, staticX, staticY + ry, rx, newRy - ry, a, b))
+            seekY = false;
+          else
+            ry = newRy;
+        }
       }
 
-      goto after_seek;
+      *pOffsetX = (staticX + rx / 2 - limg_MinBlockSize / 2) & ~(size_t)(limg_BlockExpandStep - 1);
+      *pOffsetY = (staticY + ry / 2 - limg_MinBlockSize / 2) & ~(size_t)(limg_BlockExpandStep - 1);
+      *pRangeX = limgMin(limg_MinBlockSize, rx);
+      *pRangeY = limgMin(limg_MinBlockSize, ry);
 
-    only_seek_y:
-      while (true)
-      {
-        const size_t newRy = limgMin(ry + limg_BlockExpandStep, maxRy);
-
-        if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, staticX, staticY + ry, rx, newRy - ry, a, b))
-          goto after_seek;
-
-        ry = newRy;
-      }
-
-      goto after_seek;
-
-    only_seek_x:
-      while (true)
-      {
-        const size_t newRx = limgMin(rx + limg_BlockExpandStep, maxRx);
-
-        if (newRx == rx || !limg_encode_attempt_include_unused_pixels(pCtx, staticX + rx, staticY, newRx - rx, ry, a, b))
-          goto after_seek;
-
-        rx = newRx;
-      }
-
-      goto after_seek;
-
-    after_seek:
-      *pOffsetX = staticX;
-      *pOffsetY = staticY;
-      *pRangeX = rx;
-      *pRangeY = ry;
-
-      if (rx >= limg_MinBlockSize && ry >= limg_MinBlockSize && limg_encode_find_block_from_center(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB))
+      if (rx >= limg_MinBlockSize && ry >= limg_MinBlockSize && limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB))
         return true;
 
-      *pA = a;
-      *pB = b;
+      *pOffsetX = staticX;
+      *pOffsetY = staticY;
+      *pRangeX = limgMin(limg_MinBlockSize, rx);
+      *pRangeY = limgMin(limg_MinBlockSize, ry);
 
-      staticX += rx;
+      if (limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB))
+        return true;
 
-      return true;
+      continue;
     }
 
     staticX = 0;
@@ -926,10 +978,10 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelError = 0x10;
-  ctx.maxBlockError = 0x10000;
-  ctx.maxChannelError = 0x10;
-  ctx.maxBlockExpandError = 0x10;
+  ctx.maxPixelError = 0x20;
+  ctx.maxBlockError = 0x6;
+  ctx.maxChannelError = 0x4;
+  ctx.maxBlockExpandError = 0x20;
 
   memset(ctx.pBlockInfo, 0, sizeof(uint32_t) * ctx.sizeX * ctx.sizeY);
 
@@ -965,8 +1017,6 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     uint8_t *pBFacsU8 = pBFacsU8Start;
     const uint8_t shift = 0;
 
-    blockError /= (rx * ry);
-
     for (size_t y = 0; y < ry; y++)
     {
       uint32_t *pBlockIndexLine = ctx.pBlockInfo + (y + oy) * ctx.sizeX + ox;
@@ -991,7 +1041,7 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
         pBFacsU8++;
         pFactorsLine++;
 
-        *pShiftLine = (uint8_t)limgMin(blockError / 8, 0xFFULL);
+        *pShiftLine = (uint8_t)limgMin(blockError * 0x10, 0xFFULL);
         pShiftLine++;
       }
     }
@@ -1006,73 +1056,9 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     blockIndex++;
   }
 
-  //for (size_t y = 0; y < ctx.blocksY; y++)
-  //{
-  //  uint8_t *pFactorLine = pFactors + (y * ctx.sizeX * limg_BlockSize);
-  //  uint32_t *pDecodedLine = pDecoded + (y * sizeX * limg_BlockSize);
-  //
-  //  for (size_t x = 0; x < ctx.blocksX; x++)
-  //  {
-  //    limg_ui8_4 a, b;
-  //
-  //    limg_encode_get_block_min_max(&ctx, x, y, a, b);
-  //    
-  //    float factors[limg_BlockSize * limg_BlockSize];
-  //    size_t blockError;
-  //
-  //    if (!limg_encode_check_block(&ctx, x, y, a, b, factors, &blockError))
-  //      __debugbreak();
-  //
-  //    *pA = *reinterpret_cast<const uint32_t *>(&a);
-  //    pA++;
-  //
-  //    *pB = *reinterpret_cast<const uint32_t *>(&b);
-  //    pB++;
-  //
-  //    uint8_t u8factors[limg_BlockSize * limg_BlockSize];
-  //    uint8_t shift = 0;
-  //
-  //    if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && (!ctx.hasAlpha || a[3] == b[3]))
-  //    {
-  //      shift = 8;
-  //
-  //      memset(u8factors, 0, sizeof(u8factors));
-  //    }
-  //    else
-  //    {
-  //      size_t error_rem = blockError;
-  //
-  //      while (error_rem < 0xFFFF)
-  //      {
-  //        shift++;
-  //        error_rem = (error_rem * 3) + 1;
-  //      }
-  //
-  //      size_t i = 0;
-  //
-  //      for (size_t yy = 0; yy < limg_BlockSize; yy++)
-  //      {
-  //        for (size_t xx = 0; xx < limg_BlockSize; xx++, i++)
-  //        {
-  //          u8factors[i] = (uint8_t)limgClamp((int32_t)(factors[xx + yy * limg_BlockSize] * (float_t)0xFF + 0.5f), 0, 0xFF) >> shift;
-  //          pFactorLine[xx + yy * ctx.sizeX] = u8factors[i] << shift;
-  //        }
-  //      }
-  //    }
-  //
-  //    *pShift = (uint8_t)limgMin(1 << shift, 0xFFULL);
-  //    pShift++;
-  //
-  //    pFactorLine += limg_BlockSize;
-  //
-  //    if (hasAlpha)
-  //      limg_decode_block_from_factors_alpha(pDecodedLine, sizeX, pFactors, *pShift, *reinterpret_cast<const limg_ui8_4 *>(pA), *reinterpret_cast<const limg_ui8_4 *>(pB));
-  //    else
-  //      limg_decode_block_from_factors_no_alpha(pDecodedLine, sizeX, pFactors, *pShift, *reinterpret_cast<const limg_ui8_4 *>(pA), *reinterpret_cast<const limg_ui8_4 *>(pB));
-  //
-  //    pDecodedLine += limg_BlockSize;
-  //  }
-  //}
+  for (size_t i = 0; i < sizeX * sizeY; i++)
+    if (!(ctx.pBlockInfo[i] & BlockInfo_InUse))
+      pDecoded[i] = pIn[i];
 
   if (!hasAlpha)
     for (size_t i = 0; i < sizeX * sizeY; i++)
