@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <inttypes.h>
 
+#include <chrono>
+
 #define STB_IMAGE_IMPLEMENTATION (1)
 #include "stb_image.h"
 
@@ -20,17 +22,58 @@ inline void Write(const char *filename, void *pData, const size_t size)
   fclose(pFile);
 }
 
+inline int64_t CurrentTimeNs()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+}
+
+inline int32_t Hash(const int32_t value)
+{
+  const uint64_t oldstate = value * 6364136223846793005ULL + (value | 1);
+
+  const uint32_t xorshifted = (uint32_t)(((oldstate >> 18) ^ oldstate) >> 27);
+  const uint32_t rot = (uint32_t)(oldstate >> 59);
+
+  return (xorshifted >> rot) | (xorshifted << (uint32_t)((-(int32_t)rot) & 31));
+}
+
+static const char Arg_NoWrite[] = "--no-output";
+
 int32_t main(const int32_t argc, const char **pArgv)
 {
   if (argc == 1)
     FAIL(EXIT_SUCCESS, "Usage: limg <InputFile>");
 
   const char *sourceImagePath = pArgv[1];
+  bool writeEncodedImages = true;
 
   size_t sizeX = 0, sizeY = 0;
   bool hasAlpha = false;
   const uint32_t *pSourceImage = nullptr;
   uint32_t *pTargetImage = nullptr;
+
+  // Parse Args.
+  {
+    int32_t argIndex = 2;
+
+    while (true)
+    {
+      const int32_t argsRemaining = argc - argIndex;
+
+      if (argsRemaining <= 0)
+        break;
+
+      if (argsRemaining >= 1 && strncmp(Arg_NoWrite, pArgv[argIndex], sizeof(Arg_NoWrite)) == 0)
+      {
+        argIndex++;
+        writeEncodedImages = false;
+      }
+      else
+      {
+        FAIL(EXIT_FAILURE, "Invalid Parameter: '%s'. Aborting.\n", pArgv[argIndex]);
+      }
+    }
+  }
 
   // Read image.
   {
@@ -47,42 +90,57 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   // Allocate space for decoded image.
   {
-    pTargetImage = reinterpret_cast<uint32_t *>(malloc(sizeX * sizeY * sizeof(uint32_t)));
+    pTargetImage = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
 
     if (pTargetImage == nullptr)
       FAIL(EXIT_FAILURE, "Failed to allocate target buffer.\n");
   }
 
-  uint32_t *pA, *pB;
-  uint8_t *pBlockError, *pFactors;
+  uint32_t *pA, *pB, *pBlockIndex;
+  uint8_t *pReductionFactor, *pFactors;
 
   // Allocate space for a, b, factors, blockError.
   {
-    pA = reinterpret_cast<uint32_t *>(malloc(sizeX / 8 * sizeY / 8 * sizeof(uint32_t)));
-    pB = reinterpret_cast<uint32_t *>(malloc(sizeX / 8 * sizeY / 8 * sizeof(uint32_t)));
-    pBlockError = reinterpret_cast<uint8_t *>(malloc(sizeX / 8 * sizeY / 8 * sizeof(uint8_t)));
-    pFactors = reinterpret_cast<uint8_t *>(malloc(sizeX * sizeY * sizeof(uint8_t)));
+    pA = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+    pB = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+    pBlockIndex = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+    pReductionFactor = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pFactors = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
   }
 
-  limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pA, uint32_t *pB, uint32_t *pDecoded, uint8_t *pFactors, uint8_t *pBlockError, const bool hasAlpha);
+  // Print Image Info.
+  {
+    printf("%" PRIu64 " x %" PRIu64 " pixels.\n", sizeX, sizeY);
+  }
 
-  const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pA, pB, pTargetImage, pFactors, pBlockError, hasAlpha);
+  // Encode.
+  {
+    limg_result limg_encode_test(const uint32_t * pIn, const size_t sizeX, const size_t sizeY, uint32_t * pDecoded, uint32_t * pA, uint32_t * pB, uint32_t * pBlockIndex, uint8_t * pFactors, uint8_t * pShift, const bool hasAlpha);
 
-  printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
-  printf("%" PRIu64 " x %" PRIu64 " pixels.\n", (sizeX / 8) * 8, (sizeY / 8) * 8);
-  printf("%" PRIu64 " x %" PRIu64 " blocks.\n", sizeX / 8, sizeY / 8);
+    const int64_t before = CurrentTimeNs();
+
+    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pReductionFactor, hasAlpha);
+
+    const int64_t after = CurrentTimeNs();
+
+    printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
+    printf("Elapsed Time: %f ms\n", (after - before) * 1e-6f);
+    printf("Throughput: %f Mpx/S\n", (((sizeX / 8) * 8 * (sizeY / 8) * 8) * 1e-6) / ((after - before) * 1e-9f));
+  }
 
   // Write everything.
+  if (writeEncodedImages)
   {
-    Write("C:\\data\\limg_a.raw", pA, sizeX / 8 * sizeY / 8 * sizeof(uint32_t));
-    Write("C:\\data\\limg_b.raw", pB, sizeX / 8 * sizeY / 8 * sizeof(uint32_t));
-    Write("C:\\data\\limg_blk_err.raw", pBlockError, sizeX / 8 * sizeY / 8 * sizeof(uint8_t));
-    Write("C:\\data\\limg_fac.raw", pFactors, sizeX * sizeY * sizeof(uint8_t));
-    Write("C:\\data\\limg_out.raw", pTargetImage, sizeX * sizeY * sizeof(uint32_t));
+    stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage);
+    stbi_write_bmp("C:\\data\\limg_blk_err.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pReductionFactor);
+    stbi_write_bmp("C:\\data\\limg_fac.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactors);
+    stbi_write_bmp("C:\\data\\limg_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pA);
+    stbi_write_bmp("C:\\data\\limg_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pB);
 
-    stbi_write_png("C:\\data\\limg_out.png", (int32_t)(sizeX / 8) * 8, (int32_t)(sizeY / 8) * 8, 4, pTargetImage, (int32_t)sizeX * sizeof(uint32_t));
-    stbi_write_png("C:\\data\\limg_blk_err.png", (int32_t)(sizeX / 8), (int32_t)(sizeY / 8), 1, pBlockError, (int32_t)(sizeX / 8));
-    stbi_write_png("C:\\data\\limg_fac.png", (int32_t)(sizeX / 8) * 8, (int32_t)(sizeY / 8) * 8, 1, pFactors, (int32_t)(sizeX));
+    for (size_t i = 0; i < sizeX * sizeY; i++)
+      pBlockIndex[i] = Hash(pBlockIndex[i]) | 0xFF000000;
+
+    stbi_write_bmp("C:\\data\\limg_index.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pBlockIndex);
   }
 
   return EXIT_SUCCESS;
