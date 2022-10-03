@@ -173,8 +173,8 @@ static_assert(sizeof(limg_ui8_4) == 4, "Invalid Configuration");
 
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
-constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
-constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 2;
+constexpr size_t limg_BlockExpandStep = 4; // must be a power of two.
+constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -302,7 +302,7 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
 
         size_t ilum = 0xFF * channels - lum;
         ilum *= ilum;
-        lum = limgMin(1, ilum >> 16);
+        lum = limgMax(1, ilum >> 17);
         error = lum * error;
 
         if constexpr (CheckPixelError)
@@ -372,7 +372,7 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
 
         size_t ilum = 0xFF * channels - lum;
         ilum *= ilum;
-        lum = limgMin(1, ilum >> 16);
+        lum = limgMax(1, ilum >> 17);
         error = lum * error;
 
         if constexpr (CheckPixelError)
@@ -384,7 +384,7 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
     }
   }
 
-  blockError /= (rangeX * rangeY);
+  blockError = (blockError * 0x10) / (rangeX * rangeY);
 
   if constexpr (WriteBlockError)
     *pBlockError = blockError;
@@ -462,7 +462,7 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
 
           size_t ilum = 0xFF * channels - lum;
           ilum *= ilum;
-          lum = limgMin(1, ilum >> 16);
+          lum = limgMax(1, ilum >> 17);
           error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
@@ -522,7 +522,7 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
 
             size_t ilum = 0xFF * channels - lum;
             ilum *= ilum;
-            lum = limgMin(1, ilum >> 16);
+            lum = limgMax(1, ilum >> 17);
             error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
@@ -596,7 +596,7 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
 
           size_t ilum = 0xFF * channels - lum;
           ilum *= ilum;
-          lum = limgMin(1, ilum >> 16);
+          lum = limgMax(1, ilum >> 17);
           error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
@@ -655,7 +655,7 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
 
             size_t ilum = 0xFF * channels - lum;
             ilum *= ilum;
-            lum = limgMin(1, ilum >> 16);
+            lum = limgMax(1, ilum >> 17);
             error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
@@ -828,7 +828,7 @@ bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, 
       limg_ui8_4 newA = a;
       limg_ui8_4 newB = b;
 
-      if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, ox, oy + ry, rx, newRy - ry, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, oy, rx, newRy, newA, newB, nullptr, nullptr)))
+      if (newRy == ry || !limg_encode_attempt_include_unused_pixels(pCtx, ox, oy + ry, rx, newRy - ry, newA, newB) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, oy, rx, newRy, newA, newB, nullptr, nullptr)))
       {
         canGrowDown = false;
       }
@@ -847,7 +847,7 @@ bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, 
       limg_ui8_4 newA = a;
       limg_ui8_4 newB = b;
 
-      if (newOx == ox || !limg_encode_attempt_include_unused_pixels(pCtx, newOx, oy, ox - newOx, ry, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, newOx, oy, newRx, ry, newA, newB, nullptr, nullptr)))
+      if (newOx == ox || !limg_encode_attempt_include_unused_pixels(pCtx, newOx, oy, ox - newOx, ry, newA, newB) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, newOx, oy, newRx, ry, newA, newB, nullptr, nullptr)))
       {
         canGrowUp = false;
       }
@@ -867,7 +867,7 @@ bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, 
       limg_ui8_4 newA = a;
       limg_ui8_4 newB = b;
 
-      if (newOy == oy || !limg_encode_attempt_include_unused_pixels(pCtx, ox, newOy, rx, oy - newOy, a, b) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, newOy, rx, newRy, newA, newB, nullptr, nullptr)))
+      if (newOy == oy || !limg_encode_attempt_include_unused_pixels(pCtx, ox, newOy, rx, oy - newOy, newA, newB) || (!(a.equals(newA, pCtx->hasAlpha) && b.equals(newB, pCtx->hasAlpha)) && !limg_encode_check_area<false, false, true, true>(pCtx, ox, newOy, rx, newRy, newA, newB, nullptr, nullptr)))
       {
         canGrowLeft = false;
       }
@@ -949,7 +949,11 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
       *pRangeY = limgMin(limg_MinBlockSize, ry);
 
       if (rx >= limg_MinBlockSize && ry >= limg_MinBlockSize && limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB))
+      {
+        staticX += limg_BlockExpandStep;
+       
         return true;
+      }
 
       *pOffsetX = staticX;
       *pOffsetY = staticY;
@@ -957,7 +961,11 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
       *pRangeY = limgMin(limg_MinBlockSize, ry);
 
       if (limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB))
+      {
+        staticX += limg_BlockExpandStep;
+
         return true;
+      }
 
       continue;
     }
@@ -978,8 +986,8 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelError = 0x20;
-  ctx.maxBlockError = 0x6;
+  ctx.maxPixelError = 0x80;
+  ctx.maxBlockError = 0x40;
   ctx.maxChannelError = 0x4;
   ctx.maxBlockExpandError = 0x20;
 
@@ -1012,6 +1020,9 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     size_t blockError = 0;
     limg_encode_check_area<true, true, false, false>(&ctx, ox, oy, rx, ry, a, b, pBlockFactors, &blockError);
 
+    if (blockError > ctx.maxBlockError)
+      continue;
+
     float *pBFacs = pBlockFactors;
     uint8_t *pBFacsU8Start = reinterpret_cast<uint8_t *>(pBFacs);
     uint8_t *pBFacsU8 = pBFacsU8Start;
@@ -1041,7 +1052,7 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
         pBFacsU8++;
         pFactorsLine++;
 
-        *pShiftLine = (uint8_t)limgMin(blockError * 0x10, 0xFFULL);
+        *pShiftLine = (uint8_t)limgMin(blockError, 0xFFULL);
         pShiftLine++;
       }
     }
