@@ -150,11 +150,11 @@ struct limg_encode_context
   uint32_t *pBlockInfo;
   size_t sizeX, sizeY;
   size_t maxPixelBlockError, // maximum error of a single pixel when trying to fit pixels into blocks.
-    maxBlockPixelError, // maximum average error of pixels per block when trying to fit them into blocks.
+    maxBlockPixelError, // maximum average error of pixels per block when trying to fit them into blocks. (accum_err * 0xFF / (rangeX * rangeY))
     maxPixelChannelBlockError, // maximum error of a single pixel on a single channel when trying to fit pixels into blocks.
     maxBlockExpandError, // maximum error of linear factor deviation when trying to expand the factors of a block in order to expand the block.
     maxPixelBitCrushError, // maximum error of a single pixel when trying to bit crush blocks.
-    maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks.
+    maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks. (accum_err * 0xFF / (rangeX * rangeY))
   bool hasAlpha;
 };
 
@@ -813,7 +813,113 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
   return false;
 }
 
-limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint32_t *pA, uint32_t *pB, uint32_t *pBlockIndex, uint8_t *pFactors, uint8_t *pBlockError, const bool hasAlpha)
+template <size_t channels>
+inline static size_t limg_color_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
+{
+  uint8_t factors0[4] = { 2, 4, 3, 3 };
+  uint8_t factors1[4] = { 3, 4, 2, 3 };
+
+  size_t error;
+
+  int_fast16_t redError = (int_fast16_t)a[0] - (int_fast16_t)b[0];
+  redError *= redError;
+
+  if (redError < 0x4000 /* = 0x80 * 0x80 */)
+  {
+    error = redError * factors0[0];
+
+    for (size_t i = 1; i < channels; i++)
+    {
+      const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
+      error += (size_t)(e * e) * (size_t)factors0[i];
+    }
+  }
+  else
+  {
+    error = redError * factors1[0];
+
+    for (size_t i = 1; i < channels; i++)
+    {
+      const int_fast16_t e = (int16_t)a[i] - (int16_t)b[i];
+      error += (size_t)(e * e) * (size_t)factors1[i];
+    }
+  }
+
+  return error;
+}
+
+template <size_t channels>
+static inline bool limg_encode_try_bit_crush_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
+{
+  uint32_t diff[channels];
+
+  for (size_t i = 0; i < channels; i++)
+    diff[i] = b[i] - a[i];
+
+  constexpr uint32_t bias = 1 << 7;
+
+  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+
+  size_t blockError = 0;
+
+  for (size_t y = 0; y < rangeY; y++)
+  {
+    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+    for (size_t x = 0; x < rangeX; x++)
+    {
+      const limg_ui8_4 px = *pLine;
+      pLine++;
+
+      const uint8_t fac = (*pFactors) >> shift;
+      pFactors++;
+
+      limg_ui8_4 dec;
+
+      for (size_t i = 0; i < channels; i++)
+        dec[i] = (uint8_t)(a[i] + (((fac << shift) * diff[i] + bias) >> 8));
+
+      const size_t error = limg_color_error<channels>(dec, px);
+
+      if (error > pCtx->maxPixelBitCrushError)
+        return false;
+
+      blockError += error;
+    }
+  }
+
+  return ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
+}
+
+static uint8_t limg_encode_find_shift_for_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const limg_ui8_4 &a, const limg_ui8_4 &b)
+{
+  uint8_t shift = 0;
+
+  if (pCtx->hasAlpha)
+  {
+    for (uint8_t i = 1; i < 8; i++)
+    {
+      if (!limg_encode_try_bit_crush_block<4>(pCtx, offsetX, offsetY, rangeX, rangeY, pFactors, i, a, b))
+        break;
+      else
+        shift = i;
+    }
+  }
+  else
+  {
+    for (uint8_t i = 1; i < 8; i++)
+    {
+      if (!limg_encode_try_bit_crush_block<3>(pCtx, offsetX, offsetY, rangeX, rangeY, pFactors, i, a, b))
+        break;
+      else
+        shift = i;
+    }
+  }
+
+  return shift;
+}
+
+limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint32_t *pA, uint32_t *pB, uint32_t *pBlockIndex, uint8_t *pFactors, uint8_t *pBlockError, uint8_t *pShift, const bool hasAlpha)
 {
   limg_result result = limg_success;
 
@@ -823,12 +929,12 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelBlockError = 0x600;
+  ctx.maxPixelBlockError = 0x200;
   ctx.maxBlockPixelError = 0x400;
   ctx.maxPixelChannelBlockError = 0x4;
   ctx.maxBlockExpandError = 0x200;
-  ctx.maxPixelBitCrushError = 0x400;
-  ctx.maxBlockBitCrushError = 0x300;
+  ctx.maxPixelBitCrushError = 0x320;
+  ctx.maxBlockBitCrushError = 0x2000;
 
   memset(ctx.pBlockInfo, 0, sizeof(uint32_t) * ctx.sizeX * ctx.sizeY);
 
@@ -841,6 +947,10 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
 
   uint32_t blockIndex = 0;
   size_t accumBlockSize = 0;
+  size_t accumBits = 0;
+  size_t unweightedBits = 0;
+  size_t accumBlockError = 0;
+  size_t unweightedBlockError = 0;
 
   while (true)
   {
@@ -860,16 +970,34 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     size_t blockError = 0;
     size_t rangeSize = 0;
     limg_encode_check_area<true, true, false, false, true>(&ctx, ox, oy, rx, ry, a, b, pBlockFactors, &blockError, 0, &rangeSize);
+    // Could be: `limg_encode_check_area<true, false, false, false, false>(&ctx, ox, oy, rx, ry, a, b, pBlockFactors, nullptr, 0, nullptr);` if we weren't writing block errors to a buffer.
 
+    accumBlockError += blockError * 0x10;
     blockError = (blockError * 0x10) / rangeSize;
+    unweightedBlockError += blockError;
 
+#ifdef _DEBUG
     if (blockError > ctx.maxBlockPixelError)
       __debugbreak();
+#endif
 
     float *pBFacs = pBlockFactors;
     uint8_t *pBFacsU8Start = reinterpret_cast<uint8_t *>(pBFacs);
     uint8_t *pBFacsU8 = pBFacsU8Start;
-    const uint8_t shift = 0;
+
+    for (size_t i = 0; i < rangeSize; i++)
+    {
+      *pBFacsU8 = (uint8_t)limgClamp((int32_t)(*pBFacs * (float_t)0xFF + 0.5f), 0, 0xFF);
+      pBFacs++;
+      pBFacsU8++;
+    }
+
+    const uint8_t shift = limg_encode_find_shift_for_block(&ctx, ox, oy, rx, ry, pBFacsU8Start, a, b);
+    accumBits += (8 - shift) * rangeSize;
+    unweightedBits += (8 - shift);
+
+    for (size_t i = 0; i < rangeSize; i++)
+      pBFacsU8Start[i] >>= shift;
 
     for (size_t y = 0; y < ry; y++)
     {
@@ -877,7 +1005,8 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
       uint32_t *pALine = pA + (y + oy) * ctx.sizeX + ox;
       uint32_t *pBLine = pB + (y + oy) * ctx.sizeX + ox;
       uint8_t *pFactorsLine = pFactors + (y + oy) * ctx.sizeX + ox;
-      uint8_t *pShiftLine = pBlockError + (y + oy) * ctx.sizeX + ox;
+      uint8_t *pBlockErrorLine = pBlockError + (y + oy) * ctx.sizeX + ox;
+      uint8_t *pShiftLine = pShift + (y + oy) * ctx.sizeX + ox;
 
       for (size_t x = 0; x < rx; x++)
       {
@@ -890,12 +1019,13 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
         *pBLine = *reinterpret_cast<const uint32_t *>(&b);
         pBLine++;
 
-        *pFactorsLine = *pBFacsU8 = (uint8_t)limgClamp((int32_t)(*pBFacs * (float_t)0xFF + 0.5f), 0, 0xFF) >> shift;
-        pBFacs++;
-        pBFacsU8++;
+        *pFactorsLine = pBFacsU8Start[x + y * rx] << shift;
         pFactorsLine++;
 
-        *pShiftLine = (uint8_t)limgMin(blockError >> 3, 0xFFULL);
+        *pBlockErrorLine = (uint8_t)limgMin(blockError >> 3, 0xFFULL);
+        pBlockErrorLine++;
+
+        *pShiftLine = (uint8_t)(1 << shift);
         pShiftLine++;
       }
     }
@@ -903,16 +1033,16 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     uint32_t *pDecodedStart = pDecoded + oy * ctx.sizeX + ox;
 
     if (hasAlpha)
-      limg_decode_block_from_factors<4>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, 0, a, b);
+      limg_decode_block_from_factors<4>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, shift, a, b);
     else
-      limg_decode_block_from_factors<3>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, 0, a, b);
+      limg_decode_block_from_factors<3>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, shift, a, b);
     
     blockIndex++;
     accumBlockSize += (rx * ry);
   }
 
 #ifdef PRINT_TEST_OUTPUT
-  printf("\n%" PRIu32 " Blocks generated.\n%5.3f %% Coverage\nAverage Size: %5.3f Pixels [(%5.3f px)^2].\nMinimum Block Size: %" PRIu64 "\nBlock Size Grow Step: %" PRIu64 "\n\n", blockIndex, (accumBlockSize / (double)(sizeX * sizeY)) * 100.0, accumBlockSize / (double)blockIndex, sqrt(accumBlockSize / (double)blockIndex), limg_MinBlockSize, limg_BlockExpandStep);
+  printf("\n%" PRIu32 " Blocks generated.\n%5.3f %% Coverage\nAverage Size: %5.3f Pixels [(%5.3f px)^2].\nMinimum Block Size: %" PRIu64 "\nBlock Size Grow Step: %" PRIu64 "\nAverage Block Error: %5.3f (Unweighted: %5.3f)\nAverage Block Bits: %5.3f (Unweighted: %5.3f)\n\n", blockIndex, (accumBlockSize / (double)(sizeX * sizeY)) * 100.0, accumBlockSize / (double)blockIndex, sqrt(accumBlockSize / (double)blockIndex), limg_MinBlockSize, limg_BlockExpandStep, accumBlockError / (double)(sizeX * sizeY), unweightedBlockError / (double)blockIndex, accumBits / (double)(sizeX * sizeY), unweightedBits / (double)blockIndex);
 #endif
 
   for (size_t i = 0; i < sizeX * sizeY; i++)
