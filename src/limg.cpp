@@ -3,6 +3,13 @@
 #include <malloc.h>
 #include <memory.h>
 
+#define PRINT_TEST_OUTPUT
+
+#ifdef PRINT_TEST_OUTPUT
+#include <stdio.h>
+#include <inttypes.h>
+#endif
+
 #include <type_traits>
 
 #ifdef _WIN32
@@ -173,8 +180,8 @@ static_assert(sizeof(limg_ui8_4) == 4, "Invalid Configuration");
 
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
-constexpr size_t limg_BlockExpandStep = 4; // must be a power of two.
-constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
+constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
+constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 2;
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -246,6 +253,7 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
   if (pCtx->hasAlpha)
   {
     constexpr size_t channels = 4;
+    constexpr size_t other_channels = 12 / channels;
 
     float dist[channels];
     float dist_or_one[channels];
@@ -282,7 +290,12 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
         for (size_t i = 0; i < channels; i++)
           offset[i] = (float)(px[i] - a[i]);
 
-        const float avg = (offset[0] + offset[1] + offset[2] + offset[3]) * inverse_dist_complete_or_one; // R G B A.
+        float avg = 0;
+
+        for (size_t i = 0; i < channels; i++)
+          avg += offset[i];
+
+        avg *= inverse_dist_complete_or_one;
 
         if constexpr (WriteToFactors)
         {
@@ -300,9 +313,9 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
           lum += px[i];
         }
 
-        size_t ilum = 0xFF * channels - lum;
+        size_t ilum = 0xFF * 12 - lum * (12 / channels);
         ilum *= ilum;
-        lum = limgMax(1, ilum >> 17);
+        lum = (ilum >> 20) + 8;
         error = lum * error;
 
         if constexpr (CheckPixelError)
@@ -352,7 +365,12 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
         for (size_t i = 0; i < channels; i++)
           offset[i] = (float)(px[i] - a[i]);
 
-        const float avg = (offset[0] + offset[1] + offset[2]) * inverse_dist_complete_or_one; // R G B.
+        float avg = 0;
+
+        for (size_t i = 0; i < channels; i++)
+          avg += offset[i];
+
+        avg *= inverse_dist_complete_or_one;
 
         if constexpr (WriteToFactors)
         {
@@ -370,9 +388,9 @@ static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offse
           lum += px[i];
         }
 
-        size_t ilum = 0xFF * channels - lum;
+        size_t ilum = 0xFF * 12 - lum * (12 / channels);
         ilum *= ilum;
-        lum = limgMax(1, ilum >> 17);
+        lum = (ilum >> 20) + 8;
         error = lum * error;
 
         if constexpr (CheckPixelError)
@@ -460,9 +478,9 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
             lum += px[i];
           }
 
-          size_t ilum = 0xFF * channels - lum;
+          size_t ilum = 0xFF * 12 - lum * (12 / channels);
           ilum *= ilum;
-          lum = limgMax(1, ilum >> 17);
+          lum = (ilum >> 20) + 8;
           error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
@@ -520,9 +538,9 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
               lum += px[i];
             }
 
-            size_t ilum = 0xFF * channels - lum;
+            size_t ilum = 0xFF * 12 - lum * (12 / channels);
             ilum *= ilum;
-            lum = limgMax(1, ilum >> 17);
+            lum = (ilum >> 20) + 8;
             error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
@@ -594,9 +612,9 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
             lum += px[i];
           }
 
-          size_t ilum = 0xFF * channels - lum;
+          size_t ilum = 0xFF * 12 - lum * (12 / channels);
           ilum *= ilum;
-          lum = limgMax(1, ilum >> 17);
+          lum = (ilum >> 20) + 8;
           error = lum * error;
 
           if (error > pCtx->maxBlockExpandError)
@@ -653,9 +671,9 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
               lum += px[i];
             }
 
-            size_t ilum = 0xFF * channels - lum;
+            size_t ilum = 0xFF * 12 - lum * (12 / channels);
             ilum *= ilum;
-            lum = limgMax(1, ilum >> 17);
+            lum = (ilum >> 20) + 8;
             error = lum * error;
 
             if (error > pCtx->maxBlockExpandError)
@@ -986,10 +1004,10 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelError = 0x80;
-  ctx.maxBlockError = 0x40;
+  ctx.maxPixelError = 0x600;
+  ctx.maxBlockError = 0x400;
   ctx.maxChannelError = 0x4;
-  ctx.maxBlockExpandError = 0x20;
+  ctx.maxBlockExpandError = 0x200;
 
   memset(ctx.pBlockInfo, 0, sizeof(uint32_t) * ctx.sizeX * ctx.sizeY);
 
@@ -1001,6 +1019,7 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   size_t blockFindStaticY = 0;
 
   uint32_t blockIndex = 0;
+  size_t accumBlockSize = 0;
 
   while (true)
   {
@@ -1052,7 +1071,7 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
         pBFacsU8++;
         pFactorsLine++;
 
-        *pShiftLine = (uint8_t)limgMin(blockError, 0xFFULL);
+        *pShiftLine = (uint8_t)limgMin(blockError >> 3, 0xFFULL);
         pShiftLine++;
       }
     }
@@ -1065,7 +1084,12 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
       limg_decode_block_from_factors_no_alpha(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, 0, a, b);
     
     blockIndex++;
+    accumBlockSize += (rx * ry);
   }
+
+#ifdef PRINT_TEST_OUTPUT
+  printf("\n%" PRIu32 " Blocks generated.\n%5.3f %% Coverage\nAverage Size: %5.3f Pixels [(%5.3f px)^2].\nMinimum Block Size: %" PRIu64 "\nBlock Size Grow Step: %" PRIu64 "\n\n", blockIndex, (accumBlockSize / (double)(sizeX * sizeY)) * 100.0, accumBlockSize / (double)blockIndex, sqrt(accumBlockSize / (double)blockIndex), limg_MinBlockSize, limg_BlockExpandStep);
+#endif
 
   for (size_t i = 0; i < sizeX * sizeY; i++)
     if (!(ctx.pBlockInfo[i] & BlockInfo_InUse))

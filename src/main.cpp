@@ -125,7 +125,7 @@ int32_t main(const int32_t argc, const char **pArgv)
 
     printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
     printf("Elapsed Time: %f ms\n", (after - before) * 1e-6f);
-    printf("Throughput: %f Mpx/S\n", (((sizeX / 8) * 8 * (sizeY / 8) * 8) * 1e-6) / ((after - before) * 1e-9f));
+    printf("Throughput: %f Mpx/S\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9f));
   }
 
   // Write everything.
