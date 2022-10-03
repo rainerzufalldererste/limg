@@ -97,14 +97,14 @@ int32_t main(const int32_t argc, const char **pArgv)
   }
 
   uint32_t *pA, *pB, *pBlockIndex;
-  uint8_t *pReductionFactor, *pFactors;
+  uint8_t *pBlockError, *pFactors;
 
   // Allocate space for a, b, factors, blockError.
   {
     pA = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     pB = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     pBlockIndex = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
-    pReductionFactor = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pBlockError = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactors = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
   }
 
@@ -115,11 +115,11 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   // Encode.
   {
-    limg_result limg_encode_test(const uint32_t * pIn, const size_t sizeX, const size_t sizeY, uint32_t * pDecoded, uint32_t * pA, uint32_t * pB, uint32_t * pBlockIndex, uint8_t * pFactors, uint8_t * pShift, const bool hasAlpha);
+    limg_result limg_encode_test(const uint32_t * pIn, const size_t sizeX, const size_t sizeY, uint32_t * pDecoded, uint32_t * pA, uint32_t * pB, uint32_t * pBlockIndex, uint8_t * pFactors, uint8_t * pBlockError, const bool hasAlpha);
 
     const int64_t before = CurrentTimeNs();
 
-    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pReductionFactor, hasAlpha);
+    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, hasAlpha);
 
     const int64_t after = CurrentTimeNs();
 
@@ -132,7 +132,7 @@ int32_t main(const int32_t argc, const char **pArgv)
   if (writeEncodedImages)
   {
     stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage);
-    stbi_write_bmp("C:\\data\\limg_blk_err.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pReductionFactor);
+    stbi_write_bmp("C:\\data\\limg_blk_err.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pBlockError);
     stbi_write_bmp("C:\\data\\limg_fac.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactors);
     stbi_write_bmp("C:\\data\\limg_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pA);
     stbi_write_bmp("C:\\data\\limg_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pB);
