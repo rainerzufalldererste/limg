@@ -158,38 +158,157 @@ struct limg_encode_context
   bool hasAlpha, ditheringEnabled;
 };
 
-struct limg_ui8_4
-{
-  uint8_t v[4];
-
-  inline uint8_t &operator[](const size_t index) { return v[index]; }
-  inline const uint8_t &operator[](const size_t index) const { return v[index]; }
-
-  inline bool equals_w_alpha(const limg_ui8_4 &other)
-  {
-    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && v[3] == other[3];
-  }
-
-  inline bool equals_wo_alpha(const limg_ui8_4 &other)
-  {
-    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2];
-  }
-
-  inline bool equals(const limg_ui8_4 &other, const bool hasAlpha)
-  {
-    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && (hasAlpha || v[3] == other[3]);
-  }
-};
-
-static_assert(sizeof(limg_ui8_4) == 4, "Invalid Configuration");
-
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
 constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
 constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
+constexpr bool limg_LuminanceDependentPixelError = true;
+constexpr bool limg_ColorDependentABError = true;
+constexpr bool limg_RetrievePreciseMinMax = true;
+
+//#define LIMG_DO_NOT_INLINE
+
+#ifndef LIMG_DO_NOT_INLINE
+#define LIMG_INLINE inline
+#define LIMG_DEBUG_NO_INLINE
+#else
+#define LIMG_INLINE __declspec(noinline)
+#define LIMG_DEBUG_NO_INLINE __declspec(noinline)
+#endif
+
+struct limg_ui8_4
+{
+  uint8_t v[4];
+
+  LIMG_INLINE uint8_t &operator[](const size_t index) { return v[index]; }
+  LIMG_INLINE const uint8_t &operator[](const size_t index) const { return v[index]; }
+
+  LIMG_INLINE bool equals_w_alpha(const limg_ui8_4 &other)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && v[3] == other[3];
+  }
+
+  LIMG_INLINE bool equals_wo_alpha(const limg_ui8_4 &other)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2];
+  }
+
+  LIMG_INLINE bool equals(const limg_ui8_4 &other, const bool hasAlpha)
+  {
+    return v[0] == other[0] && v[1] == other[1] && v[2] == other[2] && (hasAlpha || v[3] == other[3]);
+  }
+};
+
+// This appears to be either slower or make no significant difference.
+//struct limg_ui8_4
+//{
+//  union
+//  {
+//    uint8_t v[4];
+//    uint32_t n;
+//  } u;
+//
+//  LIMG_INLINE uint8_t &operator[](const size_t index) { return u.v[index]; }
+//  LIMG_INLINE const uint8_t &operator[](const size_t index) const { return u.v[index]; }
+//
+//  LIMG_INLINE bool equals_w_alpha(const limg_ui8_4 &other)
+//  {
+//    return (u.n ^ other.u.n) == 0;
+//  }
+//
+//  LIMG_INLINE bool equals_wo_alpha(const limg_ui8_4 &other)
+//  {
+//    return ((u.n ^ other.u.n) & 0x00FFFFFF) == 0;
+//  }
+//
+//  LIMG_INLINE bool equals(const limg_ui8_4 &other, const bool hasAlpha)
+//  {
+//    const uint32_t xored = (u.n ^ other.u.n);
+//
+//    return u.v[0] == other[0] && u.v[1] == other[1] && u.v[2] == other[2] && (hasAlpha || u.v[3] == other[3]);
+//  }
+//};
+
+// This appears to be slower.
+//struct limg_ui8_4
+//{
+//  uint32_t v;
+//
+//  LIMG_INLINE uint8_t &operator[](const size_t index) { return *(reinterpret_cast<uint8_t *>(&v) + index); }
+//  LIMG_INLINE const uint8_t operator[](const size_t index) const { return (uint8_t)(v >> (index * 8)); }
+//
+//  LIMG_INLINE bool equals_w_alpha(const limg_ui8_4 &other)
+//  {
+//    return (v ^ other.v) == 0;
+//  }
+//
+//  LIMG_INLINE bool equals_wo_alpha(const limg_ui8_4 &other)
+//  {
+//    return ((v ^ other.v) & 0x00FFFFFF) == 0;
+//  }
+//
+//  LIMG_INLINE bool equals(const limg_ui8_4 &other, const bool hasAlpha)
+//  {
+//    const uint32_t xored = (v ^ other.v);
+//
+//    return xored == 0 || (hasAlpha && (xored & 0x00FFFFFF) == 0);
+//  }
+//};
+
+static_assert(sizeof(limg_ui8_4) == 4, "Invalid Configuration");
 
 //////////////////////////////////////////////////////////////////////////
+
+template <size_t channels>
+LIMG_INLINE static size_t limg_color_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
+{
+  size_t error;
+
+  int_fast16_t redError = (int_fast16_t)a[0] - (int_fast16_t)b[0];
+  redError *= redError;
+
+  if (redError < 0x4000 /* = 0x80 * 0x80 */)
+  {
+    const uint8_t factors[4] = { 2, 4, 3, 3 };
+
+    error = redError * factors[0];
+
+    for (size_t i = 1; i < channels; i++)
+    {
+      const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
+      error += (size_t)(e * e) * (size_t)factors[i];
+    }
+  }
+  else
+  {
+    const uint8_t factors[4] = { 3, 4, 2, 3 };
+
+    error = redError * factors[0];
+
+    for (size_t i = 1; i < channels; i++)
+    {
+      const int_fast16_t e = (int16_t)a[i] - (int16_t)b[i];
+      error += (size_t)(e * e) * (size_t)factors[i];
+    }
+  }
+
+  return error;
+}
+
+template <size_t channels>
+LIMG_INLINE static size_t limg_vector_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
+{
+  size_t error = 0;
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
+    error += (size_t)(e * e);
+  }
+
+  return error;
+}
 
 template <size_t channels>
 static void limg_decode_block_from_factors(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
@@ -222,7 +341,7 @@ static void limg_decode_block_from_factors(uint32_t *pOut, const size_t sizeX, c
 }
 
 template <bool WriteToFactors, bool WriteBlockError, bool CheckBounds, bool CheckPixelError, bool ReadWriteRangeSize, size_t channels>
-static bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_ui8_4 &a, const limg_ui8_4 &b, float *pFactors, size_t *pBlockError, const size_t startBlockError, size_t *pAdditionalRangeForInitialBlockError)
+static LIMG_DEBUG_NO_INLINE bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_ui8_4 &a, const limg_ui8_4 &b, float *pFactors, size_t *pBlockError, const size_t startBlockError, size_t *pAdditionalRangeForInitialBlockError)
 {
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
@@ -283,24 +402,28 @@ static bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offs
       {
         if (px[0] < 0x80)
         {
-          uint8_t factors[4] = { 2, 4, 3, 3 };
+          const uint8_t factors[4] = { 2, 4, 3, 3 };
 
           for (size_t i = 0; i < channels; i++)
           {
             const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one[i] - avg) * dist[i]));
             error += e * e * factors[i];
-            lum += px[i];
+
+            if constexpr (limg_LuminanceDependentPixelError)
+              lum += px[i];
           }
         }
         else
         {
-          uint8_t factors[4] = { 3, 4, 2, 3 };
+          const uint8_t factors[4] = { 3, 4, 2, 3 };
 
           for (size_t i = 0; i < channels; i++)
           {
             const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one[i] - avg) * dist[i]));
             error += e * e * factors[i];
-            lum += px[i];
+
+            if constexpr (limg_LuminanceDependentPixelError)
+              lum += px[i];
           }
         }
       }
@@ -310,14 +433,20 @@ static bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offs
         {
           const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one[i] - avg) * dist[i]));
           error += e * e;
-          lum += px[i];
+
+          if constexpr (limg_LuminanceDependentPixelError)
+            lum += px[i];
         }
       }
-
-      size_t ilum = 0xFF * 12 - lum * (12 / channels);
-      ilum *= ilum;
-      lum = (ilum >> 20) + 8;
-      error = lum * error;
+      
+      if constexpr (limg_LuminanceDependentPixelError)
+      {
+        size_t ilum;
+        ilum = 0xFF * 12 - lum * (12 / channels);
+        ilum *= ilum;
+        lum = (ilum >> 20) + 8;
+        error = lum * error;
+      }
 
       if constexpr (CheckPixelError)
         if (error > pCtx->maxPixelBlockError)
@@ -342,7 +471,7 @@ static bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offs
 }
 
 template <bool WriteToFactors, bool WriteBlockError, bool CheckBounds, bool CheckPixelError, bool ReadWriteRangeSize>
-inline static bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_ui8_4 &a, const limg_ui8_4 &b, float *pFactors, size_t *pBlockError, const size_t startBlockError, size_t *pAdditionalRangeForInitialBlockError)
+static LIMG_INLINE bool limg_encode_check_area(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_ui8_4 &a, const limg_ui8_4 &b, float *pFactors, size_t *pBlockError, const size_t startBlockError, size_t *pAdditionalRangeForInitialBlockError)
 {
   if (pCtx->hasAlpha)
     return limg_encode_check_area_<WriteToFactors, WriteBlockError, CheckBounds, CheckPixelError, ReadWriteRangeSize, 4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b, pFactors, pBlockError, startBlockError, pAdditionalRangeForInitialBlockError);
@@ -351,7 +480,7 @@ inline static bool limg_encode_check_area(limg_encode_context *pCtx, const size_
 }
 
 template <size_t channels>
-static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
+static LIMG_DEBUG_NO_INLINE bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
 {
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
@@ -416,24 +545,28 @@ static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const
         {
           if (px[0] < 0x80)
           {
-            uint8_t factors[4] = { 2, 4, 3, 3 };
+            const uint8_t factors[4] = { 2, 4, 3, 3 };
 
             for (size_t i = 0; i < channels; i++)
             {
               const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
               error += e * e * factors[i];
-              lum += px[i];
+
+              if constexpr (limg_LuminanceDependentPixelError)
+                lum += px[i];
             }
           }
           else
           {
-            uint8_t factors[4] = { 3, 4, 2, 3 };
+            const uint8_t factors[4] = { 3, 4, 2, 3 };
 
             for (size_t i = 0; i < channels; i++)
             {
               const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
               error += e * e * factors[i];
-              lum += px[i];
+
+              if constexpr (limg_LuminanceDependentPixelError)
+                lum += px[i];
             }
           }
         }
@@ -443,14 +576,19 @@ static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const
           {
             const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
             error += e * e;
-            lum += px[i];
+
+            if constexpr (limg_LuminanceDependentPixelError)
+              lum += px[i];
           }
         }
 
-        size_t ilum = 0xFF * 12 - lum * (12 / channels);
-        ilum *= ilum;
-        lum = (ilum >> 20) + 8;
-        error = lum * error;
+        if constexpr (limg_LuminanceDependentPixelError)
+        {
+          size_t ilum = 0xFF * 12 - lum * (12 / channels);
+          ilum *= ilum;
+          lum = (ilum >> 20) + 8;
+          error = lum * error;
+        }
 
         if (error > pCtx->maxBlockExpandError)
           return false;
@@ -508,24 +646,28 @@ static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const
           {
             if (px[0] < 0x80)
             {
-              uint8_t factors[4] = { 2, 4, 3, 3 };
+              const uint8_t factors[4] = { 2, 4, 3, 3 };
 
               for (size_t i = 0; i < channels; i++)
               {
                 const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
                 error += e * e * factors[i];
-                lum += px[i];
+
+                if constexpr (limg_LuminanceDependentPixelError)
+                  lum += px[i];
               }
             }
             else
             {
-              uint8_t factors[4] = { 3, 4, 2, 3 };
+              const uint8_t factors[4] = { 3, 4, 2, 3 };
 
               for (size_t i = 0; i < channels; i++)
               {
                 const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
                 error += e * e * factors[i];
-                lum += px[i];
+
+                if constexpr (limg_LuminanceDependentPixelError)
+                  lum += px[i];
               }
             }
           }
@@ -535,14 +677,19 @@ static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const
             {
               const size_t e = (size_t)(0.5f + fabsf((offset[i] / dist_or_one_px[i] - avg_offset) * dist_px[i]));
               error += e * e;
-              lum += px[i];
+
+              if constexpr (limg_LuminanceDependentPixelError)
+                lum += px[i];
             }
           }
 
-          size_t ilum = 0xFF * 12 - lum * (12 / channels);
-          ilum *= ilum;
-          lum = (ilum >> 20) + 8;
-          error = lum * error;
+          if constexpr (limg_LuminanceDependentPixelError)
+          {
+            size_t ilum = 0xFF * 12 - lum * (12 / channels);
+            ilum *= ilum;
+            lum = (ilum >> 20) + 8;
+            error = lum * error;
+          }
 
           if (error > pCtx->maxBlockExpandError)
             return false;
@@ -559,7 +706,7 @@ static bool limg_encode_attempt_include_pixels_(limg_encode_context *pCtx, const
   return true;
 }
 
-static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
+static LIMG_INLINE bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
 {
   if (pCtx->hasAlpha)
     return limg_encode_attempt_include_pixels_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, out_a, out_b);
@@ -567,7 +714,7 @@ static bool limg_encode_attempt_include_pixels(limg_encode_context *pCtx, const 
     return limg_encode_attempt_include_pixels_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, out_a, out_b);
 }
 
-static bool limg_encode_check_pixel_unused(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY)
+static LIMG_INLINE bool limg_encode_check_pixel_unused(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY)
 {
   const uint32_t *pStart = (pCtx->pBlockInfo + offsetX + offsetY * pCtx->sizeX);
 
@@ -587,24 +734,26 @@ static bool limg_encode_check_pixel_unused(limg_encode_context *pCtx, const size
   return true;
 }
 
-static bool limg_encode_attempt_include_unused_pixels(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
+static LIMG_INLINE bool limg_encode_attempt_include_unused_pixels(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b)
 {
   return limg_encode_check_pixel_unused(pCtx, offsetX, offsetY, rangeX, rangeY) && limg_encode_attempt_include_pixels(pCtx, offsetX, offsetY, rangeX, rangeY, out_a, out_b);
 }
 
 template <size_t channels>
-static inline void limg_encode_get_block_min_max_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
 {
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
   a = pStart[0];
   b = a;
   
+  size_t x = 1;
+
   for (size_t y = 0; y < rangeY; y++)
   {
     const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
 
-    for (size_t x = 0; x < rangeX; x++)
+    for (; x < rangeX; x++)
     {
       limg_ui8_4 px = *pLine;
       pLine++;
@@ -629,10 +778,12 @@ static inline void limg_encode_get_block_min_max_(limg_encode_context *pCtx, con
           b = px;
       }
     }
+
+    x = 0;
   }
 }
 
-static void limg_encode_get_block_min_max(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
+static LIMG_INLINE void limg_encode_get_block_min_max(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
 {
   if (pCtx->hasAlpha)
     limg_encode_get_block_min_max_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
@@ -640,7 +791,90 @@ static void limg_encode_get_block_min_max(limg_encode_context *pCtx, const size_
     limg_encode_get_block_min_max_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
 }
 
-bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB, const bool up, const bool down, const bool left, const bool right)
+template <size_t channels>
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_a_b_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
+{
+  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+
+  limg_ui8_4 low[channels];
+  limg_ui8_4 high[channels];
+
+  for (size_t i = 0; i < channels; i++)
+    high[i] = low[i] = *pStart;
+
+  size_t x = 1;
+
+  for (size_t y = 0; y < rangeY; y++)
+  {
+    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+    for (; x < rangeX; x++)
+    {
+      limg_ui8_4 px = *pLine;
+      pLine++;
+
+      for (size_t i = 0; i < channels; i++)
+      {
+        if (px[i] < low[i][i])
+          low[i] = px;
+        else if (px[i] > high[i][i])
+          high[i] = px;
+      }
+    }
+
+    x = 0;
+  }
+
+  limg_ui8_4 max_l = low[0];
+  limg_ui8_4 max_h = high[0];
+
+  size_t maxDist;
+
+  if constexpr (limg_ColorDependentABError)
+    maxDist = limg_color_error<channels>(max_l, max_h);
+  else
+    maxDist = limg_vector_error<channels>(max_l, max_h);
+
+  size_t h_index = 1;
+
+  for (size_t l_index = 0; l_index < channels; l_index++)
+  {
+    for (; h_index < channels; h_index++)
+    {
+      const limg_ui8_4 l = low[l_index];
+      const limg_ui8_4 h = high[h_index];
+
+      size_t dist;
+
+      if constexpr (limg_ColorDependentABError)
+        dist = limg_color_error<channels>(l, h);
+      else
+        dist = limg_vector_error<channels>(l, h);
+
+      if (dist > maxDist)
+      {
+        maxDist = dist;
+        max_l = l;
+        max_h = h;
+      }
+    }
+
+    h_index = 0;
+  }
+
+  a = max_l;
+  b = max_h;
+}
+
+static LIMG_INLINE void limg_encode_get_block_a_b(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
+{
+  if (pCtx->hasAlpha)
+    limg_encode_get_block_a_b_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+  else
+    limg_encode_get_block_a_b_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+}
+
+bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB, const bool up, const bool down, const bool left, const bool right)
 {
   int64_t ox = *pOffsetX;
   int64_t oy = *pOffsetY;
@@ -661,7 +895,11 @@ bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, 
 #endif
 
   limg_ui8_4 a, b;
-  limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
+  
+  if constexpr (limg_RetrievePreciseMinMax)
+    limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
+  else
+    limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
 
   size_t blockError = 0;
   size_t rangeSize = 0;
@@ -828,7 +1066,7 @@ bool limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, 
   return true;
 }
 
-bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &staticY, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB)
+bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &staticY, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB)
 {
   size_t ox = staticX;
   size_t oy = staticY;
@@ -852,7 +1090,11 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
         continue;
 
       limg_ui8_4 a, b;
-      limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
+
+      if constexpr (limg_RetrievePreciseMinMax)
+        limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
+      else
+        limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
 
       *pOffsetX = ox;
       *pOffsetY = oy;
@@ -899,42 +1141,7 @@ bool limg_encode_find_block(limg_encode_context *pCtx, size_t &staticX, size_t &
 }
 
 template <size_t channels>
-inline static size_t limg_color_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  uint8_t factors0[4] = { 2, 4, 3, 3 };
-  uint8_t factors1[4] = { 3, 4, 2, 3 };
-
-  size_t error;
-
-  int_fast16_t redError = (int_fast16_t)a[0] - (int_fast16_t)b[0];
-  redError *= redError;
-
-  if (redError < 0x4000 /* = 0x80 * 0x80 */)
-  {
-    error = redError * factors0[0];
-
-    for (size_t i = 1; i < channels; i++)
-    {
-      const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
-      error += (size_t)(e * e) * (size_t)factors0[i];
-    }
-  }
-  else
-  {
-    error = redError * factors1[0];
-
-    for (size_t i = 1; i < channels; i++)
-    {
-      const int_fast16_t e = (int16_t)a[i] - (int16_t)b[i];
-      error += (size_t)(e * e) * (size_t)factors1[i];
-    }
-  }
-
-  return error;
-}
-
-template <size_t channels>
-static inline bool limg_encode_try_bit_crush_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
+static LIMG_INLINE bool limg_encode_try_bit_crush_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
 {
   uint32_t diff[channels];
 
@@ -976,7 +1183,7 @@ static inline bool limg_encode_try_bit_crush_block(limg_encode_context *pCtx, co
   return ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
 }
 
-static uint8_t limg_encode_find_shift_for_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const limg_ui8_4 &a, const limg_ui8_4 &b)
+static LIMG_INLINE uint8_t limg_encode_find_shift_for_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const limg_ui8_4 &a, const limg_ui8_4 &b)
 {
   uint8_t shift = 0;
 
@@ -1014,13 +1221,19 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelBlockError = 0x100;
-  ctx.maxBlockPixelError = 0x1C0;
+  ctx.maxPixelBlockError = 0x10;
+  ctx.maxBlockPixelError = 0x1C;
   ctx.maxPixelChannelBlockError = 0xA;
   ctx.maxBlockExpandError = 0x80;
   ctx.maxPixelBitCrushError = 0xC0 * (size_t)(ctx.hasAlpha ? 10 : 7);
   ctx.maxBlockBitCrushError = 0x30 * (size_t)(ctx.hasAlpha ? 10 : 7);
   ctx.ditheringEnabled = true;
+
+  if constexpr (limg_LuminanceDependentPixelError)
+  {
+    ctx.maxPixelBlockError *= 0x10;
+    ctx.maxBlockPixelError *= 0x10;
+  }
 
   if constexpr (limg_ColorDependentBlockError)
   {
