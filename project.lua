@@ -20,7 +20,7 @@ project(ProjectName)
   
   objdir "intermediate/obj"
 
-  files { "src/**.c", "src/**.cc", "src/**.cpp", "src/**.h", "src/**.hh", "src/**.hpp", "src/**.inl", "src/**rc" }
+  files { "src/**.c", "src/**.cc", "src/**.cpp", "src/**.h", "src/**.hh", "src/**.hpp", "src/**.inl", "src/**rc", "*.md" }
   files { "project.lua" }
   
   includedirs { "src**" }
