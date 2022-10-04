@@ -165,7 +165,7 @@ constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = true;
 constexpr bool limg_ColorDependentABError = true;
-constexpr bool limg_RetrievePreciseMinMax = true;
+constexpr bool limg_RetrievePreciseDecomposition = true;
 
 //#define LIMG_DO_NOT_INLINE
 
@@ -783,16 +783,8 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_cont
   }
 }
 
-static LIMG_INLINE void limg_encode_get_block_min_max(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
-{
-  if (pCtx->hasAlpha)
-    limg_encode_get_block_min_max_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
-  else
-    limg_encode_get_block_min_max_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
-}
-
 template <size_t channels>
-static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_a_b_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_per_channel(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
 {
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
@@ -868,10 +860,20 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_a_b_(limg_encode_context 
 
 static LIMG_INLINE void limg_encode_get_block_a_b(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b)
 {
-  if (pCtx->hasAlpha)
-    limg_encode_get_block_a_b_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+  if constexpr (limg_RetrievePreciseDecomposition)
+  {
+    if (pCtx->hasAlpha)
+      limg_encode_get_block_min_max_per_channel<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+    else
+      limg_encode_get_block_min_max_per_channel<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+  }
   else
-    limg_encode_get_block_a_b_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+  {
+    if (pCtx->hasAlpha)
+      limg_encode_get_block_min_max_<4>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+    else
+      limg_encode_get_block_min_max_<3>(pCtx, offsetX, offsetY, rangeX, rangeY, a, b);
+  }
 }
 
 bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB, const bool up, const bool down, const bool left, const bool right)
@@ -895,11 +897,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_expand(limg_encode_context *pCt
 #endif
 
   limg_ui8_4 a, b;
-  
-  if constexpr (limg_RetrievePreciseMinMax)
-    limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
-  else
-    limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
+  limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
 
   size_t blockError = 0;
   size_t rangeSize = 0;
@@ -1090,11 +1088,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
         continue;
 
       limg_ui8_4 a, b;
-
-      if constexpr (limg_RetrievePreciseMinMax)
-        limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
-      else
-        limg_encode_get_block_min_max(pCtx, ox, oy, rx, ry, a, b);
+      limg_encode_get_block_a_b(pCtx, ox, oy, rx, ry, a, b);
 
       *pOffsetX = ox;
       *pOffsetY = oy;
