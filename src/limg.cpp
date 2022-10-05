@@ -1279,7 +1279,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
 
       if (rx >= limg_MinBlockSize && ry >= limg_MinBlockSize && limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB, true, true, true, true))
       {
-        staticX = ox + limg_BlockExpandStep;
+        staticX = ox;
         staticY = oy;
 
         return true;
