@@ -114,11 +114,13 @@ int32_t main(const int32_t argc, const char **pArgv)
     printf("%" PRIu64 " x %" PRIu64 " pixels.\n", sizeX, sizeY);
   }
 
+  size_t totalBlockArea = 0;
+
   // Encode.
   {
     const int64_t before = CurrentTimeNs();
 
-    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha);
+    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha, &totalBlockArea);
 
     const int64_t after = CurrentTimeNs();
 
@@ -132,7 +134,12 @@ int32_t main(const int32_t argc, const char **pArgv)
     double mean, max;
     const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
 
-    printf("\nPerceptual RGB(A) PSNR: %7.5f dB (mean: %5.3f / maximum possible: %1.0f => %5.3f %%)\n", psnr, mean, max, (mean / max) * 100.0);
+    printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
+
+    const double meanOverBlocks = mean * (double)(sizeX * sizeY) / (double)totalBlockArea;
+    const double block_psnr = 10.0 * log10((double)max / meanOverBlocks);
+
+    printf("Block Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n", block_psnr, meanOverBlocks, (meanOverBlocks / max) * 100.0, (sqrt(meanOverBlocks) / sqrt(max)) * 100.0);
   }
 
   // Write everything.
