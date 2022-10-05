@@ -1560,3 +1560,41 @@ epilogue:
 
   return result;
 }
+
+double limg_compare(const uint32_t *pImageA, const uint32_t *pImageB, const size_t sizeX, const size_t sizeY, const bool hasAlpha, double *pMeanSquaredError, double *pMaxPossibleSquaredError)
+{
+  size_t error = 0;
+  size_t maxError;
+
+  const limg_ui8_4 *pA = reinterpret_cast<const limg_ui8_4 *>(pImageA);
+  const limg_ui8_4 *pB = reinterpret_cast<const limg_ui8_4 *>(pImageB);
+
+  const limg_ui8_4 min = { 0, 0, 0, 0 };
+  const limg_ui8_4 max = { 0xFF, 0xFF, 0xFF, 0xFF };
+
+  if (hasAlpha)
+  {
+    maxError = limg_color_error<4>(min, max);
+
+    for (size_t i = 0; i < sizeX * sizeY; i++)
+      error += limg_color_error<4>(pA[i], pB[i]);
+  }
+  else
+  {
+    maxError = limg_color_error<3>(min, max);
+
+    for (size_t i = 0; i < sizeX * sizeY; i++)
+      error += limg_color_error<3>(pA[i], pB[i]);
+  }
+
+  const double mse = error / (double)(sizeX * sizeY);
+  const double psnr = 10.0 * log10((double)maxError / mse);
+
+  if (pMeanSquaredError != nullptr)
+    *pMeanSquaredError = mse;
+
+  if (pMaxPossibleSquaredError != nullptr)
+    *pMaxPossibleSquaredError = (double)maxError;
+
+  return psnr;
+}

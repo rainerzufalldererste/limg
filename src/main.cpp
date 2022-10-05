@@ -116,8 +116,6 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   // Encode.
   {
-    limg_result limg_encode_test(const uint32_t * pIn, const size_t sizeX, const size_t sizeY, uint32_t * pDecoded, uint32_t * pA, uint32_t * pB, uint32_t * pBlockIndex, uint8_t * pFactors, uint8_t * pBlockError, uint8_t * pShift, const bool hasAlpha);
-
     const int64_t before = CurrentTimeNs();
 
     const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha);
@@ -127,6 +125,14 @@ int32_t main(const int32_t argc, const char **pArgv)
     printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
     printf("Elapsed Time: %f ms\n", (after - before) * 1e-6f);
     printf("Throughput: %f Mpx/S\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9f));
+  }
+
+  // Compare.
+  {
+    double mean, max;
+    const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
+
+    printf("\nPerceptual RGB(A) PSNR: %7.5f dB (mean: %5.3f / maximum possible: %1.0f => %5.3f %%)\n", psnr, mean, max, (mean / max) * 100.0);
   }
 
   // Write everything.
