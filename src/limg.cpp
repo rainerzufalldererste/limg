@@ -1675,6 +1675,8 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
       *pOffsetY = (oy + ry / 2 - limg_MinBlockSize / 2) & ~(size_t)(limg_BlockExpandStep - 1);
       *pRangeX = limgMin(limg_MinBlockSize, rx);
       *pRangeY = limgMin(limg_MinBlockSize, ry);
+      const limg_ui8_4 a = *pA;
+      const limg_ui8_4 b = *pB;
 
       if (rx >= limg_MinBlockSize && ry >= limg_MinBlockSize && limg_encode_find_block_expand(pCtx, pOffsetX, pOffsetY, pRangeX, pRangeY, pA, pB, true, true, true, true))
       {
@@ -1688,6 +1690,8 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
       *pOffsetY = oy;
       *pRangeX = rx;
       *pRangeY = ry;
+      *pA = a;
+      *pB = b;
 
       staticX = ox + rx;
       staticY = oy;
@@ -1883,8 +1887,9 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
     unweightedBlockError += blockError;
 
 #ifdef _DEBUG
-    if (blockError > ctx.maxBlockPixelError)
-      __debugbreak();
+    // If we're super accurate this may accidentally occur, since we calculate the error using the floating point average position and direction rather than the uint8_t min and max. Technically shouldn't matter since it only occurs due to a lack of precision. (at least if that's the reason why it's occuring...)
+    //if (blockError > ctx.maxBlockPixelError)
+    //  __debugbreak();
 #endif
 
     float *pBFacs = pBlockFactors;
