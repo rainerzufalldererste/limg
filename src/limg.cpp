@@ -151,7 +151,7 @@ constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
 constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
-constexpr bool limg_LuminanceDependentPixelError = true;
+constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
 constexpr bool limg_DiagnoseCulprits = true;
 
@@ -169,7 +169,7 @@ struct limg_encode_context
   bool hasAlpha, ditheringEnabled;
 
   size_t culprits, 
-    culpritWasPixelBlockErrorCulprit, 
+    culpritWasPixelBlockError, 
     culpritWasBlockPixelError, 
     culpritWasPixelChannelBlockError, 
     culpritWasBlockExpandError, 
@@ -756,7 +756,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
             if constexpr (limg_DiagnoseCulprits)
             {
               pCtx->culprits++;
-              pCtx->culpritWasBlockPixelError++;
+              pCtx->culpritWasPixelBlockError++;
             }
 
             return false;
@@ -855,7 +855,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_check_area_(limg_encode_context *pC
           if constexpr (limg_DiagnoseCulprits)
           {
             pCtx->culprits++;
-            pCtx->culpritWasPixelBlockErrorCulprit++;
+            pCtx->culpritWasPixelBlockError++;
           }
 
           return false;
@@ -1806,12 +1806,12 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelBlockError = 0x10;
+  ctx.maxPixelBlockError = 0x12;
   ctx.maxBlockPixelError = 0x1C; // error is multiplied by 0x10.
   ctx.maxPixelChannelBlockError = 0x80;
   ctx.maxBlockExpandError = 0x80;
-  ctx.maxPixelBitCrushError = 0xC;
-  ctx.maxBlockBitCrushError = 0x3; // error is multiplied by 0x10.
+  ctx.maxPixelBitCrushError = 0x10;
+  ctx.maxBlockBitCrushError = 0x4; // error is multiplied by 0x10.
   ctx.ditheringEnabled = true;
 
   if constexpr (limg_LuminanceDependentPixelError)
@@ -1981,9 +1981,9 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   if constexpr (limg_DiagnoseCulprits)
   {
     printf("CULPRIT info: (%" PRIu64 " culprits)\n", ctx.culprits);
-    printf("PixelBlockErrorCulprit: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBlockErrorCulprit, (ctx.culpritWasPixelBlockErrorCulprit / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBlockErrorCulprit / (double)(ctx.culpritWasPixelBlockErrorCulprit + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
-    printf("BlockPixelError       : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockPixelError, (ctx.culpritWasBlockPixelError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockPixelError / (double)(ctx.culpritWasPixelBlockErrorCulprit + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
-    printf("PixelChannelBlockError: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelChannelBlockError, (ctx.culpritWasPixelChannelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelChannelBlockError / (double)(ctx.culpritWasPixelBlockErrorCulprit + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("PixelBlockErrorCulprit: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBlockError, (ctx.culpritWasPixelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("BlockPixelError       : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockPixelError, (ctx.culpritWasBlockPixelError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockPixelError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("PixelChannelBlockError: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelChannelBlockError, (ctx.culpritWasPixelChannelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelChannelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
     printf("BlockExpandError      : % 8" PRIu64 " (%7.3f%%)\n", ctx.culpritWasBlockExpandError, (ctx.culpritWasBlockExpandError / (double)ctx.culprits) * 100.0);
     printf("PixelBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
     printf("BlockBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
