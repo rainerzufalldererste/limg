@@ -692,7 +692,8 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
           lengthSquared += vec[i] * vec[i];
         }
 
-        const float inv_length = 1.f / sqrtf(lengthSquared);
+        //const float inv_length = 1.f / sqrtf(lengthSquared);
+        const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
 
         for (size_t i = 0; i < channels; i++)
           diff_xi[i] += vec[i] * inv_length;
@@ -1798,7 +1799,7 @@ static LIMG_INLINE uint8_t limg_encode_find_shift_for_block(limg_encode_context 
   return shift;
 }
 
-limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint32_t *pA, uint32_t *pB, uint32_t *pBlockIndex, uint8_t *pFactors, uint8_t *pBlockError, uint8_t *pShift, const bool hasAlpha, size_t *pTotalBlockArea)
+limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint32_t *pA, uint32_t *pB, uint32_t *pBlockIndex, uint8_t *pFactors, uint8_t *pBlockError, uint8_t *pShift, const bool hasAlpha, size_t *pTotalBlockArea, const uint32_t errorFactor)
 {
   limg_result result = limg_success;
 
@@ -1810,12 +1811,12 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   ctx.sizeX = sizeX;
   ctx.sizeY = sizeY;
   ctx.hasAlpha = hasAlpha;
-  ctx.maxPixelBlockError = 0x12;
-  ctx.maxBlockPixelError = 0x1C; // error is multiplied by 0x10.
-  ctx.maxPixelChannelBlockError = 0x80;
-  ctx.maxBlockExpandError = 0x80;
-  ctx.maxPixelBitCrushError = 0x10;
-  ctx.maxBlockBitCrushError = 0x4; // error is multiplied by 0x10.
+  ctx.maxPixelBlockError = 0x12 * (errorFactor);
+  ctx.maxBlockPixelError = 0x1C * (errorFactor / 3); // error is multiplied by 0x10.
+  ctx.maxPixelChannelBlockError = 0x40 * (errorFactor / 2);
+  ctx.maxBlockExpandError = 0x20 * (errorFactor);
+  ctx.maxPixelBitCrushError = 0x5 * (errorFactor / 2);
+  ctx.maxBlockBitCrushError = 0x2 * (errorFactor / 2); // error is multiplied by 0x10.
   ctx.ditheringEnabled = true;
 
   if constexpr (limg_LuminanceDependentPixelError)

@@ -37,15 +37,35 @@ inline int32_t Hash(const int32_t value)
   return (xorshifted >> rot) | (xorshifted << (uint32_t)((-(int32_t)rot) & 31));
 }
 
+uint64_t ParseUInt(const char *text)
+{
+  uint64_t ret = 0;
+
+  while (true)
+  {
+    const uint8_t d = (uint8_t)(*text - '0');
+    text++;
+
+    if (d > 9)
+      break;
+
+    ret = (ret << 1) + (ret << 3) + d;
+  }
+
+  return ret;
+}
+
 static const char Arg_NoWrite[] = "--no-output";
+static const char Arg_ErrorFactor[] = "--error-factor";
 
 int32_t main(const int32_t argc, const char **pArgv)
 {
   if (argc == 1)
-    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile>");
+    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor>]", Arg_NoWrite, Arg_ErrorFactor);
 
   const char *sourceImagePath = pArgv[1];
   bool writeEncodedImages = true;
+  uint32_t errorFactor = 4;
 
   size_t sizeX = 0, sizeY = 0;
   bool hasAlpha = false;
@@ -67,6 +87,11 @@ int32_t main(const int32_t argc, const char **pArgv)
       {
         argIndex++;
         writeEncodedImages = false;
+      }
+      else if (argsRemaining >= 2 && strncmp(Arg_ErrorFactor, pArgv[argIndex], sizeof(Arg_ErrorFactor)) == 0)
+      {
+        errorFactor = (uint32_t)ParseUInt(pArgv[argIndex + 1]);
+        argIndex += 2;
       }
       else
       {
@@ -120,7 +145,7 @@ int32_t main(const int32_t argc, const char **pArgv)
   {
     const int64_t before = CurrentTimeNs();
 
-    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha, &totalBlockArea);
+    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha, &totalBlockArea, errorFactor);
 
     const int64_t after = CurrentTimeNs();
 
