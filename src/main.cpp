@@ -122,7 +122,7 @@ int32_t main(const int32_t argc, const char **pArgv)
   }
 
   uint32_t *pA, *pB, *pBlockIndex;
-  uint8_t *pBlockError, *pFactors, *pShift;
+  uint8_t *pBlockError, *pFactorsA, *pFactorsB, *pFactorsC, *pShift;
 
   // Allocate space for a, b, factors, blockError.
   {
@@ -130,7 +130,9 @@ int32_t main(const int32_t argc, const char **pArgv)
     pB = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     pBlockIndex = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     pBlockError = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
-    pFactors = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pShift = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
   }
 
@@ -139,13 +141,11 @@ int32_t main(const int32_t argc, const char **pArgv)
     printf("%" PRIu64 " x %" PRIu64 " pixels.\n", sizeX, sizeY);
   }
 
-  size_t totalBlockArea = 0;
-
   // Encode.
   {
     const int64_t before = CurrentTimeNs();
 
-    const limg_result result = limg_encode_test(pSourceImage, sizeX, sizeY, pTargetImage, pA, pB, pBlockIndex, pFactors, pBlockError, pShift, hasAlpha, &totalBlockArea, errorFactor);
+    const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, hasAlpha, errorFactor);
 
     const int64_t after = CurrentTimeNs();
 
@@ -160,27 +160,15 @@ int32_t main(const int32_t argc, const char **pArgv)
     const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
 
     printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
-
-    const double meanOverBlocks = mean * (double)(sizeX * sizeY) / (double)totalBlockArea;
-    const double block_psnr = 10.0 * log10((double)max / meanOverBlocks);
-
-    printf("Block Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n", block_psnr, meanOverBlocks, (meanOverBlocks / max) * 100.0, (sqrt(meanOverBlocks) / sqrt(max)) * 100.0);
   }
 
   // Write everything.
   if (writeEncodedImages)
   {
     stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage);
-    stbi_write_bmp("C:\\data\\limg_blk_err.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pBlockError);
-    stbi_write_bmp("C:\\data\\limg_shift.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pShift);
-    stbi_write_bmp("C:\\data\\limg_fac.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactors);
-    stbi_write_bmp("C:\\data\\limg_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pA);
-    stbi_write_bmp("C:\\data\\limg_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pB);
-
-    for (size_t i = 0; i < sizeX * sizeY; i++)
-      pBlockIndex[i] = Hash(pBlockIndex[i]) | 0xFF000000;
-
-    stbi_write_bmp("C:\\data\\limg_index.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pBlockIndex);
+    stbi_write_bmp("C:\\data\\limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
+    stbi_write_bmp("C:\\data\\limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
+    stbi_write_bmp("C:\\data\\limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
   }
 
   return EXIT_SUCCESS;
