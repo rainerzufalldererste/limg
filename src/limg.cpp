@@ -758,8 +758,8 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
       {
         int32_t estCol;
         estCol = (int32_t)(in.dirA_min[i] + (((fA << shift[0]) * normalA[i] + bias) >> 8));
-        estCol += (int32_t)(in.dirB_offset[i] + (((fB << shift[1]) * normalB[i] + bias) >> 8));
-        estCol += (int32_t)(in.dirC_offset[i] + (((fC << shift[2]) * normalC[i] + bias) >> 8));
+        estCol += (int32_t)(in.dirB_offset[i] + (((fB << shift[1]) * normalB[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(in.dirC_offset[i] + (((fC << shift[2]) * normalC[i] + (int32_t)bias) >> 8));
 
         px[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
@@ -1014,7 +1014,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     }
   }
 
-  float *pError = pScratch;
+  float *pEstimate = pScratch;
 
   float diff_xi_dirB[channels];
   float diff_xi_dirC[channels];
@@ -1034,6 +1034,9 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     max_dirA = FLT_MIN;
 
     const float inv_dot_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
+
+    for (size_t i = 0; i < channels; i++)
+      diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
 
     for (size_t y = 0; y < rangeY; y++)
     {
@@ -1059,14 +1062,14 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
         for (size_t i = 0; i < channels; i++)
         {
-          pError[i] = avg[i] + f * diff_xi_dirA[i];
-          error_vec_dirA[i] = (float)px[i] - pError[i];
+          pEstimate[i] = avg[i] + f * diff_xi_dirA[i];
+          error_vec_dirA[i] = (float)px[i] - pEstimate[i];
 
           if (fabsf(error_vec_dirA[i]) > max_abs)
             max_abs = error_vec_dirA[i];
         }
 
-        pError += channels;
+        pEstimate += channels;
 
         if (max_abs != 0)
         {
@@ -1093,7 +1096,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
     limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
 
-    pError = pScratch;
+    pEstimate = pScratch;
 
     const float inv_dot_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
     const float inv_dot_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
@@ -1115,7 +1118,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
         float lineOriginToPx[channels];
 
         for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = px[i] - pError[i];
+          lineOriginToPx[i] = px[i] - pEstimate[i];
 
         const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_dot_diff_xi_dirB;
 
@@ -1126,8 +1129,8 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
         for (size_t i = 0; i < channels; i++)
         {
-          pError[i] = (pError[i] + facB * diff_xi_dirB[i]);
-          error_vec_dirAB[i] = (float)px[i] - pError[i];
+          pEstimate[i] = (pEstimate[i] + facB * diff_xi_dirB[i]);
+          error_vec_dirAB[i] = (float)px[i] - pEstimate[i];
         }
 
         const float facC = limg_dot<float, channels>(error_vec_dirAB, diff_xi_dirC) * inv_dot_diff_xi_dirC;
@@ -1135,7 +1138,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
         min_dirC = limgMin(min_dirC, facC);
         max_dirC = limgMax(max_dirC, facC);
 
-        pError += channels;
+        pEstimate += channels;
       }
     }
   }
