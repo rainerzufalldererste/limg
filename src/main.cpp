@@ -121,8 +121,8 @@ int32_t main(const int32_t argc, const char **pArgv)
       FAIL(EXIT_FAILURE, "Failed to allocate target buffer.\n");
   }
 
-  uint32_t *pA, *pB, *pBlockIndex;
-  uint8_t *pBlockError, *pFactorsA, *pFactorsB, *pFactorsC, *pShift;
+  uint32_t *pA, *pB, *pBlockIndex, *pShift;
+  uint8_t *pBlockError, *pFactorsA, *pFactorsB, *pFactorsC;
 
   // Allocate space for a, b, factors, blockError.
   {
@@ -133,7 +133,7 @@ int32_t main(const int32_t argc, const char **pArgv)
     pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
-    pShift = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+    pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
   }
 
   // Print Image Info.
@@ -145,7 +145,7 @@ int32_t main(const int32_t argc, const char **pArgv)
   {
     const int64_t before = CurrentTimeNs();
 
-    const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, hasAlpha, errorFactor);
+    const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, hasAlpha, errorFactor);
 
     const int64_t after = CurrentTimeNs();
 
@@ -159,16 +159,21 @@ int32_t main(const int32_t argc, const char **pArgv)
     double mean, max;
     const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
 
-    printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
+    printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
   }
 
   // Write everything.
   if (writeEncodedImages)
   {
-    stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage);
+    if (stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
+      puts("Wrote decoded file.");
+    else
+      puts("Failed to write decoded file.");
+
     stbi_write_bmp("C:\\data\\limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
     stbi_write_bmp("C:\\data\\limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
     stbi_write_bmp("C:\\data\\limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
+    stbi_write_bmp("C:\\data\\limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
   }
 
   return EXIT_SUCCESS;
