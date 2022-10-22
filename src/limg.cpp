@@ -2296,19 +2296,19 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
   uint8_t shift_try[3] = { 0, 0, 0 };
 
-  for (uint8_t a = 0; a < 8; a++)
+  for (uint8_t a = 0; a <= 8; a++)
   {
     shift_try[0] = a;
 
     uint8_t b = 0;
 
-    for (; b < 8; b++)
+    for (; b <= 8; b++)
     {
       shift_try[1] = b;
 
       uint8_t c = 0;
 
-      for (; c < 8; c++)
+      for (; c <= 8; c++)
       {
         if (a + b + c >= max_shift)
         {
@@ -2346,6 +2346,9 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 // returns new `ditherHash`.
 LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
 {
+  if (shift > 8)
+    return ditherHash;
+
   const uint32_t ditherSize = (1 << shift) - 1;
   const int32_t ditherOffset = 1 << (shift - 1);
 
@@ -2566,7 +2569,7 @@ epilogue:
 }
 
 template <size_t channels>
-void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint8_t *pScratchU8, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3])
+void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint8_t *pScratchU8, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8])
 {
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
 
@@ -2646,15 +2649,21 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
         }
 
         for (size_t i = 0; i < 3; i++)
+        {
           accum_bits[i] += (8 - shift[i]) * rangeSize;
+          accum_bits[3 + i * 9 + shift[i]] += rangeSize;
+        }
       }
       else
       {
         for (size_t i = 0; i < 3; i++)
+        {
           accum_bits[i] += 8 * rangeSize;
+          accum_bits[3 + i * 9] += rangeSize;
+        }
       }
 
-      const uint8_t bit_to_pattern[8] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE };
+      const uint8_t bit_to_pattern[9] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE, 0xFF };
 
       const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
 
@@ -2740,7 +2749,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
     ctx.maxBlockBitCrushError *= 0x1;
   }
 
-  size_t accum_bits[3] = { 0, 0, 0 };
+  size_t accum_bits[3 + 3 * 9] = { 0 };
 
   float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
   uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
@@ -2753,7 +2762,20 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
 #ifdef PRINT_TEST_OUTPUT
   const size_t totalPixels = ctx.sizeX * ctx.sizeY;
 
-  printf("\nAverage Block Bits: %5.3f\nA: %5.3f | B: %5.3f | C: %5.3f\n\n", (accum_bits[0] + accum_bits[1] + accum_bits[2]) / (double)totalPixels, accum_bits[0] / (double)totalPixels, accum_bits[1] / (double)totalPixels, accum_bits[2] / (double)totalPixels);
+  printf("\nAverage Block Bits: %5.3f (A: %5.3f | B: %5.3f | C: %5.3f)\n\n", (accum_bits[0] + accum_bits[1] + accum_bits[2]) / (double)totalPixels, accum_bits[0] / (double)totalPixels, accum_bits[1] / (double)totalPixels, accum_bits[2] / (double)totalPixels);
+
+  for (size_t i = 0; i < 9; i++)
+    printf(" %" PRIu64 " bit   ", 8 - i);
+
+  for (size_t i = 0; i < 3; i++)
+  {
+    puts("");
+
+    for (size_t j = 0; j < 9; j++)
+      printf("%7.4f  ", accum_bits[3 + i * 9 + j] * 100.0 / (double)totalPixels);
+  }
+
+  puts("\n");
 
   if constexpr (limg_DiagnoseCulprits)
   {
