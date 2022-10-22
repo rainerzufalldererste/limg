@@ -1796,6 +1796,26 @@ static LIMG_INLINE bool limg_encode_get_block_a_b(limg_encode_context *pCtx, con
   }
 }
 
+template <size_t channels>
+static LIMG_INLINE void limg_encode_sum_to_decomposition_state(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state)
+{
+  for (size_t i = 0; i < channels; i++)
+    state.sum[i] = 0;
+
+  for (size_t oy = offsetY; oy < rangeY; oy++)
+  {
+    const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + oy * pCtx->sizeX + offsetX);
+
+    for (size_t ox = offsetX; ox < rangeX; ox++)
+    {
+      for (size_t i = 0; i < channels; i++)
+        state.sum[i] += (*pLine)[i];
+
+      pLine++;
+    }
+  }
+}
+
 bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB, const bool up, const bool down, const bool left, const bool right)
 {
   int64_t ox = *pOffsetX;
@@ -2545,6 +2565,138 @@ epilogue:
   return result;
 }
 
+template <size_t channels>
+void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint8_t *pScratchU8, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3])
+{
+  uint64_t ditherLast = 0xCA7F00D15BADF00D;
+
+  for (size_t y = 0; y < pCtx->sizeY; y += limg_MinBlockSize)
+  {
+    for (size_t x = 0; x < pCtx->sizeX; x += limg_MinBlockSize)
+    {
+      const size_t rx = limgMin(pCtx->sizeX - x, limg_MinBlockSize);
+      const size_t ry = limgMin(pCtx->sizeY - y, limg_MinBlockSize);
+
+      limg_encode_decomposition_state encode_state;
+      limg_encode_sum_to_decomposition_state<channels>(pCtx, x, y, rx, ry, encode_state);
+
+      limg_encode_3d_output<channels> decomposition;
+      limg_encode_get_block_factors_accurate_from_state_3d_<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, pScratchFloat);
+
+      limg_color_error_state_3d<channels> color_error_state;
+      limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
+
+      uint8_t *pAu8 = pScratchU8;
+      uint8_t *pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
+      uint8_t *pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+
+      for (size_t oy = 0; oy < ry; oy++)
+      {
+        const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + (oy + y) * pCtx->sizeX + x);
+
+        for (size_t ox = 0; ox < rx; ox++)
+        {
+          float a, b, c;
+
+          limg_color_error_state_3d_get_factors<channels>(*pLine, decomposition, color_error_state, a, b, c);
+
+          *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);;
+          *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);;
+          *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);;
+
+          pAu8++;
+          pBu8++;
+          pCu8++;
+
+          pLine++;
+        }
+      }
+
+      pAu8 = pScratchU8;
+      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
+      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+
+      uint8_t shift[3] = { 0, 0, 0 };
+      limg_encode_find_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
+
+      const size_t rangeSize = rx * ry;
+
+      if (shift[0] || shift[1] || shift[2])
+      {
+        if (pCtx->ditheringEnabled)
+        {
+          if (shift[0])
+            ditherLast = limg_encode_dither(shift[0], rangeSize, ditherLast, pAu8);
+
+          if (shift[1])
+            ditherLast = limg_encode_dither(shift[1], rangeSize, ditherLast, pBu8);
+
+          if (shift[2])
+            ditherLast = limg_encode_dither(shift[2], rangeSize, ditherLast, pCu8);
+        }
+        else
+        {
+          // it's probably faster to not `if` the shift values individually.
+          for (size_t i = 0; i < rangeSize; i++)
+          {
+            pAu8[i] >>= shift[0];
+            pBu8[i] >>= ((shift[1] + 1) >> 1);
+            pCu8[i] >>= ((shift[2] + 1) >> 1);
+          }
+        }
+
+        accum_bits[0] += (size_t)(8 - shift[0]) * rangeSize;
+
+        for (size_t i = 1; i < 3; i++)
+          accum_bits[i] += (size_t)(8 - limgMax(0, (shift[i] - 1) / 2)) * rangeSize;
+      }
+      else
+      {
+        for (size_t i = 0; i < 3; i++)
+          accum_bits[i] += 8 * rangeSize;
+      }
+
+      const uint8_t bit_to_pattern[8] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE };
+
+      const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
+
+      for (size_t oy = 0; oy < ry; oy++)
+      {
+        uint8_t *pFactorsALine = pFactorsA + (y + oy) * pCtx->sizeX + x;
+        uint8_t *pFactorsBLine = pFactorsB + (y + oy) * pCtx->sizeX + x;
+        uint8_t *pFactorsCLine = pFactorsC + (y + oy) * pCtx->sizeX + x;
+        uint32_t *pShiftLine = pShiftABCX + (y + oy) * pCtx->sizeX + x;
+
+        for (size_t ox = 0; ox < rx; ox++)
+        {
+          *pFactorsALine = *pAu8 << shift[0];
+          pFactorsALine++;
+          pAu8++;
+
+          *pFactorsBLine = *pBu8 << shift[1];
+          pFactorsBLine++;
+          pBu8++;
+
+          *pFactorsCLine = *pCu8 << shift[2];
+          pFactorsCLine++;
+          pCu8++;
+
+          *pShiftLine = shift_val;
+          pShiftLine++;
+        }
+      }
+
+      pAu8 = pScratchU8;
+      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
+      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+
+      uint32_t *pDecodedStart = pDecoded + y * pCtx->sizeX + x;
+
+      limg_decode_block_from_factors_3d<channels>(pDecodedStart, pCtx->sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
+    }
+  }
+}
+
 limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, const bool hasAlpha, const uint32_t errorFactor)
 {
   limg_result result = limg_success;
@@ -2589,158 +2741,16 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
     ctx.maxPixelBitCrushError *= 0x1;
     ctx.maxBlockBitCrushError *= 0x1;
   }
-
-  uint64_t ditherLast = 0xCA7F00D15BADF00D;
   
   size_t accum_bits[3] = { 0, 0, 0 };
 
   float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
   uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
 
-  for (size_t y = 0; y < sizeY; y += limg_MinBlockSize)
-  {
-    //const limg_ui8_4 *pInLine = reinterpret_cast<const limg_ui8_4 *>(ctx.pSourceImage + y * ctx.sizeX);
-
-    for (size_t x = 0; x < sizeX; x += limg_MinBlockSize)
-    {
-      const size_t rx = limgMin(sizeX - x, limg_MinBlockSize);
-      const size_t ry = limgMin(sizeY - y, limg_MinBlockSize);
-
-      constexpr size_t channels = 3;
-
-      limg_encode_decomposition_state encode_state;
-
-      for (size_t i = 0; i < channels; i++)
-        encode_state.sum[i] = 0;
-
-      for (size_t oy = y; oy < ry; oy++)
-      {
-        const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(ctx.pSourceImage + oy * ctx.sizeX + x);
-
-        for (size_t ox = x; ox < rx; ox++)
-        {
-          for (size_t i = 0; i < channels; i++)
-            encode_state.sum[i] += (*pLine)[i];
-
-          pLine++;
-        }
-      }
-
-      limg_encode_3d_output<channels> decomposition;
-      limg_encode_get_block_factors_accurate_from_state_3d_<channels>(&ctx, x, y, rx, ry, decomposition, encode_state, scratchBuffer);
-
-      limg_color_error_state_3d<channels> color_error_state;
-      limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
-
-      uint8_t *pAu8 = scratch_u8;
-      uint8_t *pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      uint8_t *pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
-
-      for (size_t oy = 0; oy < ry; oy++)
-      {
-        const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(ctx.pSourceImage + (oy + y) * ctx.sizeX + x);
-
-        for (size_t ox = 0; ox < rx; ox++)
-        {
-          float a, b, c;
-
-          limg_color_error_state_3d_get_factors<channels>(*pLine, decomposition, color_error_state, a, b, c);
-
-          *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);;
-          *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);;
-          *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);;
-
-          pAu8++;
-          pBu8++;
-          pCu8++;
-
-          pLine++;
-        }
-      }
-
-      pAu8 = scratch_u8;
-      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
-
-      uint8_t shift[3] = { 0, 0, 0 };
-      limg_encode_find_shift_for_block_3d<channels>(&ctx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
-
-      const size_t rangeSize = rx * ry;
-
-      if (shift[0] || shift[1] || shift[2])
-      {
-        if (ctx.ditheringEnabled)
-        {
-          if (shift[0])
-            ditherLast = limg_encode_dither(shift[0], rangeSize, ditherLast, pAu8);
-
-          if (shift[1])
-            ditherLast = limg_encode_dither(shift[1], rangeSize, ditherLast, pBu8);
-
-          if (shift[2])
-            ditherLast = limg_encode_dither(shift[2], rangeSize, ditherLast, pCu8);
-        }
-        else
-        {
-          // it's probably faster to not `if` the shift values individually.
-          for (size_t i = 0; i < rangeSize; i++)
-          {
-            pAu8[i] >>= shift[0];
-            pBu8[i] >>= ((shift[1] + 1) >> 1);
-            pCu8[i] >>= ((shift[2] + 1) >> 1);
-          }
-        }
-
-        accum_bits[0] += (size_t)(8 - shift[0]) * rangeSize;
-
-        for (size_t i = 1; i < 3; i++)
-          accum_bits[i] += (size_t)(8 - limgMax(0, (shift[i] - 1) / 2)) * rangeSize;
-      }
-      else
-      {
-        for (size_t i = 0; i < 3; i++)
-          accum_bits[i] += 8 * rangeSize;
-      }
-
-      const uint8_t bit_to_pattern[8] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE };
-
-      const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
-
-      for (size_t oy = 0; oy < ry; oy++)
-      {
-        uint8_t *pFactorsALine = pFactorsA + (y + oy) * ctx.sizeX + x;
-        uint8_t *pFactorsBLine = pFactorsB + (y + oy) * ctx.sizeX + x;
-        uint8_t *pFactorsCLine = pFactorsC + (y + oy) * ctx.sizeX + x;
-        uint32_t *pShiftLine = pShiftABCX + (y + oy) * ctx.sizeX + x;
-
-        for (size_t ox = 0; ox < rx; ox++)
-        {
-          *pFactorsALine = *pAu8 << shift[0];
-          pFactorsALine++;
-          pAu8++;
-
-          *pFactorsBLine = *pBu8 << shift[1];
-          pFactorsBLine++;
-          pBu8++;
-
-          *pFactorsCLine = *pCu8 << shift[2];
-          pFactorsCLine++;
-          pCu8++;
-
-          *pShiftLine = shift_val;
-          pShiftLine++;
-        }
-      }
-
-      pAu8 = scratch_u8;
-      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
-
-      uint32_t *pDecodedStart = pDecoded + y * ctx.sizeX + x;
-
-      limg_decode_block_from_factors_3d<channels>(pDecodedStart, sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
-    }
-  }
+  if (ctx.hasAlpha)
+    limg_encode3d_test_<4>(&ctx, scratchBuffer, scratch_u8, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits);
+  else
+    limg_encode3d_test_<3>(&ctx, scratchBuffer, scratch_u8, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits);
 
 #ifdef PRINT_TEST_OUTPUT
   const size_t totalPixels = ctx.sizeX * ctx.sizeY;
