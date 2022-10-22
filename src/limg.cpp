@@ -736,6 +736,12 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
     normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
   }
 
+  uint8_t decode_bias[3] = { 0, 0, 0 };
+
+  for (size_t i = 0; i < 3; i++)
+    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
+      decode_bias[i] |= j;
+
   constexpr uint32_t bias = 1 << 7;
 
   for (size_t y = 0; y < rangeY; y++)
@@ -757,9 +763,9 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
       for (size_t i = 0; i < channels; i++)
       {
         int32_t estCol;
-        estCol = (int32_t)(in.dirA_min[i] + (((fA << shift[0]) * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirB_offset[i] + (((fB << shift[1]) * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirC_offset[i] + (((fC << shift[2]) * normalC[i] + (int32_t)bias) >> 8));
+        estCol = (int32_t)(in.dirA_min[i] + ((((fA << shift[0]) + fA * decode_bias[0]) * normalA[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(in.dirB_offset[i] + ((((fB << shift[1]) + fB * decode_bias[1]) * normalB[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(in.dirC_offset[i] + ((((fC << shift[2]) + fC * decode_bias[2]) * normalC[i] + (int32_t)bias) >> 8));
 
         px[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
@@ -2184,6 +2190,12 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
     normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
   }
 
+  uint8_t decode_bias[3] = { 0, 0, 0 };
+  
+  for (size_t i = 0; i < 3; i++)
+    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
+      decode_bias[i] |= j;
+
   constexpr uint32_t bias = 1 << 7;
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
   size_t blockError = 0;
@@ -2207,12 +2219,18 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
 
       limg_ui8_4 dec;
 
+      const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
+      uint8_t decoded[3];
+
+      for (size_t i = 0; i < 3; i++)
+        decoded[i] = (encoded[i] << shift[i]) + (encoded[i] * decode_bias[i]);
+
       for (size_t i = 0; i < channels; i++)
       {
         int32_t estCol;
-        estCol = (int32_t)(in.dirA_min[i] + ((((fA >> shift[0]) << shift[0]) * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirB_offset[i] + ((((fB >> shift[1]) << shift[1]) * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirC_offset[i] + ((((fC >> shift[2]) << shift[2]) * normalC[i] + (int32_t)bias) >> 8));
+        estCol = (int32_t)(in.dirA_min[i] + ((decoded[0] * normalA[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(in.dirB_offset[i] + ((decoded[0] * normalB[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(in.dirC_offset[i] + ((decoded[0] * normalC[i] + (int32_t)bias) >> 8));
 
         dec[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
@@ -2251,9 +2269,6 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
 template <size_t channels>
 static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
 {
-  for (size_t i = 0; i < 3; i++)
-    shift[i] = 0;
-
   size_t max_shift = 0;
 
   uint8_t shift_try[3] = { 0, 0, 0 };
@@ -2536,8 +2551,8 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   ctx.maxBlockPixelError = 0x1C * (errorFactor / 3); // error is multiplied by 0x10.
   ctx.maxPixelChannelBlockError = 0x40 * (errorFactor / 2);
   ctx.maxBlockExpandError = 0x20 * (errorFactor);
-  ctx.maxPixelBitCrushError = 0x5 * (errorFactor / 2);
-  ctx.maxBlockBitCrushError = 0x2 * (errorFactor / 2); // error is multiplied by 0x10.
+  ctx.maxPixelBitCrushError = 0x6 * (errorFactor / 2);
+  ctx.maxBlockBitCrushError = 0x4 * (errorFactor / 2); // error is multiplied by 0x10.
   ctx.ditheringEnabled = true;
 
   if constexpr (limg_LuminanceDependentPixelError)
@@ -2582,9 +2597,9 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
       const size_t rx = limgMin(sizeX - x, limg_MinBlockSize);
       const size_t ry = limgMin(sizeY - y, limg_MinBlockSize);
 
-      limg_encode_decomposition_state encode_state;
-
       constexpr size_t channels = 3;
+
+      limg_encode_decomposition_state encode_state;
 
       for (size_t i = 0; i < channels; i++)
         encode_state.sum[i] = 0;
@@ -2641,10 +2656,10 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
       uint8_t shift[3] = { 0, 0, 0 };
       limg_encode_find_shift_for_block_3d<channels>(&ctx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
 
+      const size_t rangeSize = rx * ry;
+
       if (shift[0] || shift[1] || shift[2])
       {
-        const size_t rangeSize = rx * ry;
-
         if (ctx.ditheringEnabled)
         {
           if (shift[0])
@@ -2668,10 +2683,17 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
         }
 
         for (size_t i = 0; i < 3; i++)
-          accum_bits[i] += (8 - shift[i]) * rangeSize;
+          accum_bits[i] += (size_t)(8 - shift[i]) * rangeSize;
+      }
+      else
+      {
+        for (size_t i = 0; i < 3; i++)
+          accum_bits[i] += 8 * rangeSize;
       }
 
-      const uint32_t shift_val = 0xFF000000 | (shift[0] << 16) | (shift[1] << 8) | shift[2];
+      const uint8_t bit_to_pattern[9] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE, 0xFF };
+
+      const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
 
       for (size_t oy = 0; oy < ry; oy++)
       {
@@ -2705,10 +2727,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
 
       uint32_t *pDecodedStart = pDecoded + y * ctx.sizeX + x;
 
-      //if (hasAlpha)
-      //  limg_decode_block_from_factors_3d<4>(pDecodedStart, sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
-      //else
-        limg_decode_block_from_factors_3d<3>(pDecodedStart, sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
+      limg_decode_block_from_factors_3d<channels>(pDecodedStart, sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
     }
   }
 
