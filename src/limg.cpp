@@ -54,19 +54,19 @@ inline void limgFreePtr(T **ppData)
 }
 
 template <typename T, typename U>
-constexpr inline auto limgMax(const T & a, const U & b) -> decltype(a > b ? a : b)
+constexpr inline auto limgMax(const T &a, const U &b) -> decltype(a > b ? a : b)
 {
   return a > b ? a : b;
 }
 
 template <typename T, typename U>
-constexpr inline auto limgMin(const T & a, const U & b) -> decltype(a < b ? a : b)
+constexpr inline auto limgMin(const T &a, const U &b) -> decltype(a < b ? a : b)
 {
   return a < b ? a : b;
 }
 
 template <typename T>
-constexpr inline T limgClamp(const T & a, const T & min, const T & max)
+constexpr inline T limgClamp(const T &a, const T &min, const T &max)
 {
   if (a < min)
     return min;
@@ -168,12 +168,12 @@ struct limg_encode_context
     maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks. (accum_err * 0xFF / (rangeX * rangeY))
   bool hasAlpha, ditheringEnabled;
 
-  size_t culprits, 
-    culpritWasPixelBlockError, 
-    culpritWasBlockPixelError, 
-    culpritWasPixelChannelBlockError, 
-    culpritWasBlockExpandError, 
-    culpritWasPixelBitCrushError, 
+  size_t culprits,
+    culpritWasPixelBlockError,
+    culpritWasBlockPixelError,
+    culpritWasPixelChannelBlockError,
+    culpritWasBlockExpandError,
+    culpritWasPixelBitCrushError,
     culpritWasBlockBitCrushError;
 };
 
@@ -211,8 +211,8 @@ struct limg_ui8_4
   {
     return (u.n ^ other.u.n) == 0;
   }
-  
-  LIMG_INLINE bool equals_wo_alpha(const limg_ui8_4 &other) const 
+
+  LIMG_INLINE bool equals_wo_alpha(const limg_ui8_4 &other) const
   {
     return ((u.n ^ other.u.n) & 0x00FFFFFF) == 0;
   }
@@ -753,7 +753,7 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
       const uint8_t fA = *pA;
       const uint8_t fB = *pB;
       const uint8_t fC = *pC;
-      
+
       pA++;
       pB++;
       pC++;
@@ -1469,7 +1469,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_attempt_include_pixels_min_max_(lim
       }
     }
   }
-  
+
   out_a = a;
   out_b = b;
 
@@ -1513,7 +1513,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_attempt_include_pixels_accurate_(li
   const limg_ui8_4 old_b = out_b;
 
   limg_encode_attempt_include_pixels_to_sum_<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, state);
-  
+
   if (!limg_encode_get_block_factors_accurate_from_state_<channels, true>(pCtx, fullOffsetX, fullOffsetY, fullRangeX, fullRangeY, out_a, out_b, state))
     return false;
 
@@ -1615,7 +1615,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_cont
 
   a = pStart[0];
   b = a;
-  
+
   size_t x = 1;
 
   for (size_t y = 0; y < rangeY; y++)
@@ -1629,7 +1629,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_cont
 
       int64_t low = 0;
 
-      for (size_t i= 0; i < channels; i++)
+      for (size_t i = 0; i < channels; i++)
         low += limgMax(-1LL, ((int64_t)a[i] - px[i]));
 
       if (low > 0)
@@ -1639,7 +1639,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_cont
       else
       {
         int64_t high = 0;
-        
+
         for (size_t i = 0; i < channels; i++)
           high += limgMax(-1LL, (px[i] - (int64_t)b[i]));
 
@@ -2211,7 +2211,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
   }
 
   uint8_t decode_bias[3] = { 0, 0, 0 };
-  
+
   for (size_t i = 0; i < 3; i++)
     for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
       decode_bias[i] |= j;
@@ -2525,7 +2525,7 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
       limg_decode_block_from_factors<4>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, shift, a, b);
     else
       limg_decode_block_from_factors<3>(pDecodedStart, sizeX, rx, ry, pBFacsU8Start, shift, a, b);
-    
+
     blockIndex++;
     accumBlockSize += (rx * ry);
   }
@@ -2640,15 +2640,13 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
           for (size_t i = 0; i < rangeSize; i++)
           {
             pAu8[i] >>= shift[0];
-            pBu8[i] >>= ((shift[1] + 1) >> 1);
-            pCu8[i] >>= ((shift[2] + 1) >> 1);
+            pBu8[i] >>= shift[1];
+            pCu8[i] >>= shift[2];
           }
         }
 
-        accum_bits[0] += (size_t)(8 - shift[0]) * rangeSize;
-
-        for (size_t i = 1; i < 3; i++)
-          accum_bits[i] += (size_t)(8 - limgMax(0, (shift[i] - 1) / 2)) * rangeSize;
+        for (size_t i = 0; i < 3; i++)
+          accum_bits[i] += (8 - shift[i]) * rangeSize;
       }
       else
       {
@@ -2741,7 +2739,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
     ctx.maxPixelBitCrushError *= 0x1;
     ctx.maxBlockBitCrushError *= 0x1;
   }
-  
+
   size_t accum_bits[3] = { 0, 0, 0 };
 
   float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
@@ -2768,9 +2766,9 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
 #endif
 
   goto epilogue;
-  
-  epilogue:
-  
+
+epilogue:
+
   return result;
 }
 
