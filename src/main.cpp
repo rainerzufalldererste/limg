@@ -121,15 +121,11 @@ int32_t main(const int32_t argc, const char **pArgv)
       FAIL(EXIT_FAILURE, "Failed to allocate target buffer.\n");
   }
 
-  uint32_t *pA, *pB, *pBlockIndex, *pShift;
-  uint8_t *pBlockError, *pFactorsA, *pFactorsB, *pFactorsC;
+  uint32_t *pShift;
+  uint8_t *pFactorsA, *pFactorsB, *pFactorsC;
 
   // Allocate space for a, b, factors, blockError.
   {
-    pA = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
-    pB = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
-    pBlockIndex = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
-    pBlockError = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
     pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
