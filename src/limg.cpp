@@ -729,11 +729,28 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
   int32_t normalB[channels];
   int32_t normalC[channels];
 
+  int32_t minA[channels];
+  int32_t minB[channels];
+  int32_t minC[channels];
+
   for (size_t i = 0; i < channels; i++)
   {
     normalA[i] = in.dirA_max[i] - in.dirA_min[i];
     normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
     normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
+
+    minA[i] = in.dirA_min[i];
+    minB[i] = in.dirB_offset[i];
+    minC[i] = in.dirC_offset[i];
+
+    if (shift[0] > 7)
+      normalA[i] = 0;
+
+    if (shift[1] > 7)
+      normalB[i] = minB[i] = 0;
+
+    if (shift[2] > 7)
+      normalC[i] = minC[i] = 0;
   }
 
   uint8_t decode_bias[3] = { 0, 0, 0 };
@@ -763,9 +780,9 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
       for (size_t i = 0; i < channels; i++)
       {
         int32_t estCol;
-        estCol = (int32_t)(in.dirA_min[i] + ((((fA << shift[0]) + fA * decode_bias[0]) * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirB_offset[i] + ((((fB << shift[1]) + fB * decode_bias[1]) * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirC_offset[i] + ((((fC << shift[2]) + fC * decode_bias[2]) * normalC[i] + (int32_t)bias) >> 8));
+        estCol = (int32_t)(minA[i] + ((((fA << shift[0]) + fA * decode_bias[0]) * normalA[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minB[i] + ((((fB << shift[1]) + fB * decode_bias[1]) * normalB[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minC[i] + ((((fC << shift[2]) + fC * decode_bias[2]) * normalC[i] + (int32_t)bias) >> 8));
 
         px[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
@@ -2203,11 +2220,28 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
   int32_t normalB[channels];
   int32_t normalC[channels];
 
+  int32_t minA[channels];
+  int32_t minB[channels];
+  int32_t minC[channels];
+
   for (size_t i = 0; i < channels; i++)
   {
     normalA[i] = in.dirA_max[i] - in.dirA_min[i];
     normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
     normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
+
+    minA[i] = in.dirA_min[i];
+    minB[i] = in.dirB_offset[i];
+    minC[i] = in.dirC_offset[i];
+
+    if (shift[0] > 7)
+      normalA[i] = 0;
+
+    if (shift[1] > 7)
+      normalB[i] = minB[i] = 0;
+
+    if (shift[2] > 7)
+      normalC[i] = minC[i] = 0;
   }
 
   uint8_t decode_bias[3] = { 0, 0, 0 };
@@ -2248,9 +2282,9 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
       for (size_t i = 0; i < channels; i++)
       {
         int32_t estCol;
-        estCol = (int32_t)(in.dirA_min[i] + ((decoded[0] * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirB_offset[i] + ((decoded[0] * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(in.dirC_offset[i] + ((decoded[0] * normalC[i] + (int32_t)bias) >> 8));
+        estCol = (int32_t)(minA[i] + ((decoded[0] * normalA[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minB[i] + ((decoded[0] * normalB[i] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minC[i] + ((decoded[0] * normalC[i] + (int32_t)bias) >> 8));
 
         dec[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
@@ -2346,7 +2380,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 // returns new `ditherHash`.
 LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
 {
-  if (shift > 8)
+  if (shift > 7)
     return ditherHash;
 
   const uint32_t ditherSize = (1 << shift) - 1;
