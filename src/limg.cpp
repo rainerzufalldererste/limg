@@ -2177,7 +2177,7 @@ static LIMG_INLINE uint8_t limg_encode_find_shift_for_block(limg_encode_context 
 }
 
 template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3])
+static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   int32_t normalA[channels];
   int32_t normalB[channels];
@@ -2263,6 +2263,8 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
     }
   }
 
+  *pBlockError = blockError;
+
   return ret;
 }
 
@@ -2270,6 +2272,7 @@ template <size_t channels>
 static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
 {
   size_t max_shift = 0;
+  size_t min_block_error = (size_t)-1;
 
   uint8_t shift_try[3] = { 0, 0, 0 };
 
@@ -2287,21 +2290,27 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
       for (; c < 8; c++)
       {
-        shift_try[2] = c;
-
-        if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try))
+        if (a + b + c >= max_shift)
         {
-          if (a + b + c > max_shift)
+          shift_try[2] = c;
+
+          size_t blockError;
+
+          if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
           {
-            for (size_t i = 0; i < 3; i++)
-              shift[i] = shift_try[i];
+            if (a + b + c > max_shift || (a + b + c == max_shift && min_block_error > blockError))
+            {
+              for (size_t i = 0; i < 3; i++)
+                shift[i] = shift_try[i];
 
-            max_shift = a + b + c;
+              max_shift = a + b + c;
+              min_block_error = blockError;
+            }
           }
-        }
-        else
-        {
-          break;
+          else
+          {
+            break;
+          }
         }
       }
 
@@ -2677,13 +2686,15 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
           for (size_t i = 0; i < rangeSize; i++)
           {
             pAu8[i] >>= shift[0];
-            pBu8[i] >>= shift[1];
-            pCu8[i] >>= shift[2];
+            pBu8[i] >>= ((shift[1] + 1) >> 1);
+            pCu8[i] >>= ((shift[2] + 1) >> 1);
           }
         }
 
-        for (size_t i = 0; i < 3; i++)
-          accum_bits[i] += (size_t)(8 - shift[i]) * rangeSize;
+        accum_bits[0] += (size_t)(8 - shift[0]) * rangeSize;
+
+        for (size_t i = 1; i < 3; i++)
+          accum_bits[i] += (size_t)(8 - limgMax(0, (shift[i] - 1) / 2)) * rangeSize;
       }
       else
       {
@@ -2691,7 +2702,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
           accum_bits[i] += 8 * rangeSize;
       }
 
-      const uint8_t bit_to_pattern[9] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE, 0xFF };
+      const uint8_t bit_to_pattern[8] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE };
 
       const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
 
