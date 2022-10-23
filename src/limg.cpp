@@ -166,7 +166,7 @@ struct limg_encode_context
     maxBlockExpandError, // maximum error of linear factor deviation when trying to expand the factors of a block in order to expand the block.
     maxPixelBitCrushError, // maximum error of a single pixel when trying to bit crush blocks.
     maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks. (accum_err * 0xFF / (rangeX * rangeY))
-  bool hasAlpha, ditheringEnabled;
+  bool hasAlpha, ditheringEnabled, fastBitCrush;
 
   size_t culprits,
     culpritWasPixelBlockError,
@@ -742,15 +742,28 @@ static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX
     minA[i] = in.dirA_min[i];
     minB[i] = in.dirB_offset[i];
     minC[i] = in.dirC_offset[i];
+  }
 
-    if (shift[0] > 7)
+  if (shift[0] > 7)
+    for (size_t i = 0; i < 3; i++)
       normalA[i] = 0;
 
-    if (shift[1] > 7)
-      normalB[i] = minB[i] = 0;
+  if (shift[1] > 7)
+  {
+    for (size_t i = 0; i < 3; i++)
+      normalB[i] = 0;
 
-    if (shift[2] > 7)
-      normalC[i] = minC[i] = 0;
+    for (size_t i = 0; i < 3; i++)
+      minB[i] = 0;
+  }
+
+  if (shift[2] > 7)
+  {
+    for (size_t i = 0; i < 3; i++)
+      normalC[i] = 0;
+
+    for (size_t i = 0; i < 3; i++)
+      minC[i] = 0;
   }
 
   uint8_t decode_bias[3] = { 0, 0, 0 };
@@ -2241,15 +2254,28 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
     minA[i] = in.dirA_min[i];
     minB[i] = in.dirB_offset[i];
     minC[i] = in.dirC_offset[i];
+  }
 
-    if (shift[0] > 7)
+  if (shift[0] > 7)
+    for (size_t i = 0; i < 3; i++)
       normalA[i] = 0;
 
-    if (shift[1] > 7)
-      normalB[i] = minB[i] = 0;
+  if (shift[1] > 7)
+  {
+    for (size_t i = 0; i < 3; i++)
+      normalB[i] = 0;
 
-    if (shift[2] > 7)
-      normalC[i] = minC[i] = 0;
+    for (size_t i = 0; i < 3; i++)
+      minB[i] = 0;
+  }
+
+  if (shift[2] > 7)
+  {
+    for (size_t i = 0; i < 3; i++)
+      normalC[i] = 0;
+
+    for (size_t i = 0; i < 3; i++)
+      minC[i] = 0;
   }
 
   uint8_t decode_bias[3] = { 0, 0, 0 };
@@ -2352,7 +2378,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
       for (; c <= 8; c++)
       {
-        if ((size_t)a + (size_t)b + (size_t)c >= max_shift)
+        if ((size_t)a + (size_t)b + (size_t)c > max_shift)
         {
           shift_try[2] = c;
 
@@ -2360,14 +2386,11 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
           if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
           {
-            if ((size_t)a + (size_t)b + (size_t)c > max_shift || ((size_t)a + (size_t)b + (size_t)c == max_shift && min_block_error > blockError))
-            {
-              for (size_t i = 0; i < 3; i++)
-                shift[i] = shift_try[i];
+            for (size_t i = 0; i < 3; i++)
+              shift[i] = shift_try[i];
 
-              max_shift = (size_t)a + (size_t)b + (size_t)c;
-              min_block_error = blockError;
-            }
+            max_shift = (size_t)a + (size_t)b + (size_t)c;
+            min_block_error = blockError;
           }
           else
           {
@@ -2382,6 +2405,58 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
     if (b == 0)
       break;
+  }
+
+  if (max_shift > 0 && !pCtx->fastBitCrush)
+  {
+    uint8_t a = shift[0];
+    uint8_t b = shift[1];
+    uint8_t c = shift[2] + 1;
+    
+    for (; a <= 8; a++)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b++)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c++)
+        {
+          if ((size_t)a + (size_t)b + (size_t)c == max_shift)
+          {
+            shift_try[2] = c;
+
+            size_t blockError;
+
+            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
+            {
+              if (min_block_error > blockError)
+              {
+                for (size_t i = 0; i < 3; i++)
+                  shift[i] = shift_try[i];
+
+                min_block_error = blockError;
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
   }
 }
 
@@ -2764,6 +2839,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   ctx.maxPixelBitCrushError = 0x6 * (errorFactor / 2);
   ctx.maxBlockBitCrushError = 0x4 * (errorFactor / 2); // error is multiplied by 0x10.
   ctx.ditheringEnabled = true;
+  ctx.fastBitCrush = false;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {
