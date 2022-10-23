@@ -10,13 +10,11 @@ project(ProjectName)
   filter {"system:windows"}
     buildoptions { '/MP' }
     ignoredefaultlibraries { "msvcrt" }
+    defines { "_CRT_SECURE_NO_WARNINGS" }
 
   filter { }
     cppdialect "C++17"
   
-  filter { }
-  
-  defines { "_CRT_SECURE_NO_WARNINGS" }
   
   objdir "intermediate/obj"
 

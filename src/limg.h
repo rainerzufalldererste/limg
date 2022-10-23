@@ -1,6 +1,7 @@
 #ifndef limg_h__
 #define limg_h__
 
+#include <stddef.h>
 #include <stdint.h>
 
 enum limg_result

@@ -1183,27 +1183,6 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
   }
 }
 
-template <size_t channels>
-static LIMG_DEBUG_NO_INLINE void limg_encode_from_output_3d_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<channels> &out, float *pFactorsA, float *pFactorsB, float *pFactorsC)
-{
-  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
-  limg_color_error_state_3d<channels> color_error_state;
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      limg_ui8_4 px = *pLine;
-      pLine++;
-
-
-    }
-  }
-}
-
 template <bool WriteToFactors, bool WriteBlockError, bool CheckBounds, bool CheckPixelError, bool ReadWriteRangeSize, size_t channels>
 static LIMG_DEBUG_NO_INLINE bool limg_encode_check_area_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_ui8_4 &a, const limg_ui8_4 &b, float *pFactors, size_t *pBlockError, const size_t startBlockError, size_t *pAdditionalRangeForInitialBlockError)
 {
@@ -1309,6 +1288,18 @@ static LIMG_INLINE bool limg_encode_check_area(limg_encode_context *pCtx, const 
 template <size_t channels>
 static LIMG_DEBUG_NO_INLINE bool limg_encode_attempt_include_pixels_min_max_per_channel_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &out_a, limg_ui8_4 &out_b, limg_encode_decomposition_state &state)
 {
+#if LIMG_PRECISE_DECOMPOSITION != 1
+  (void)pCtx;
+  (void)offsetX;
+  (void)offsetY;
+  (void)rangeX;
+  (void)rangeY;
+  (void)out_a;
+  (void)out_b;
+  (void)state;
+
+  return false;
+#else
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
   for (size_t y = 0; y < rangeY; y++)
@@ -1413,6 +1404,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_attempt_include_pixels_min_max_per_
   state.maxDist = maxDist;
 
   return true;
+#endif
 }
 
 template <size_t channels>
@@ -1677,6 +1669,16 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_(limg_encode_cont
 template <size_t channels>
 static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_per_channel_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b, limg_encode_decomposition_state &state)
 {
+#if LIMG_PRECISE_DECOMPOSITION != 1
+  (void)pCtx;
+  (void)offsetX;
+  (void)offsetY;
+  (void)rangeX;
+  (void)rangeY;
+  (void)a;
+  (void)b;
+  (void)state;
+#else
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
   limg_ui8_4 low[channels];
@@ -1755,6 +1757,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_min_max_per_channel_(limg
   }
 
   state.maxDist = maxDist;
+#endif
 }
 
 template <size_t channels>
@@ -2349,7 +2352,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
       for (; c <= 8; c++)
       {
-        if (a + b + c >= max_shift)
+        if ((size_t)a + (size_t)b + (size_t)c >= max_shift)
         {
           shift_try[2] = c;
 
@@ -2357,12 +2360,12 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
           if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
           {
-            if (a + b + c > max_shift || (a + b + c == max_shift && min_block_error > blockError))
+            if ((size_t)a + (size_t)b + (size_t)c > max_shift || ((size_t)a + (size_t)b + (size_t)c == max_shift && min_block_error > blockError))
             {
               for (size_t i = 0; i < 3; i++)
                 shift[i] = shift_try[i];
 
-              max_shift = a + b + c;
+              max_shift = (size_t)a + (size_t)b + (size_t)c;
               min_block_error = blockError;
             }
           }
@@ -2456,10 +2459,6 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
 
   memset(ctx.pBlockInfo, 0, sizeof(uint32_t) * ctx.sizeX * ctx.sizeY);
 
-  size_t blockFactorsCapacity = 1024 * 1024;
-  float *pBlockFactors = reinterpret_cast<float *>(malloc(blockFactorsCapacity * sizeof(float)));
-  LIMG_ERROR_IF(pBlockFactors == nullptr, limg_error_MemoryAllocationFailure);
-
   size_t blockFindStaticX = 0;
   size_t blockFindStaticY = 0;
 
@@ -2471,6 +2470,10 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   size_t unweightedBlockError = 0;
 
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
+
+  size_t blockFactorsCapacity = 1024 * 1024;
+  float *pBlockFactors = reinterpret_cast<float *>(malloc(blockFactorsCapacity * sizeof(float)));
+  LIMG_ERROR_IF(pBlockFactors == nullptr, limg_error_MemoryAllocationFailure);
 
   while (true)
   {
@@ -2580,12 +2583,12 @@ limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size
   if constexpr (limg_DiagnoseCulprits)
   {
     printf("CULPRIT info: (%" PRIu64 " culprits)\n", ctx.culprits);
-    printf("PixelBlockErrorCulprit: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBlockError, (ctx.culpritWasPixelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
-    printf("BlockPixelError       : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockPixelError, (ctx.culpritWasBlockPixelError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockPixelError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
-    printf("PixelChannelBlockError: % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelChannelBlockError, (ctx.culpritWasPixelChannelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelChannelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
-    printf("BlockExpandError      : % 8" PRIu64 " (%7.3f%%)\n", ctx.culpritWasBlockExpandError, (ctx.culpritWasBlockExpandError / (double)ctx.culprits) * 100.0);
-    printf("PixelBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
-    printf("BlockBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    printf("PixelBlockErrorCulprit: %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBlockError, (ctx.culpritWasPixelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("BlockPixelError       : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockPixelError, (ctx.culpritWasBlockPixelError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockPixelError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("PixelChannelBlockError: %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelChannelBlockError, (ctx.culpritWasPixelChannelBlockError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelChannelBlockError / (double)(ctx.culpritWasPixelBlockError + ctx.culpritWasBlockPixelError + ctx.culpritWasPixelChannelBlockError)) * 100.0);
+    printf("BlockExpandError      : %8" PRIu64 " (%7.3f%%)\n", ctx.culpritWasBlockExpandError, (ctx.culpritWasBlockExpandError / (double)ctx.culprits) * 100.0);
+    printf("PixelBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    printf("BlockBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
     puts("");
   }
 
@@ -2819,8 +2822,8 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   if constexpr (limg_DiagnoseCulprits)
   {
     printf("CULPRIT info: (%" PRIu64 " culprits)\n", ctx.culprits);
-    printf("PixelBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
-    printf("BlockBitCrushError    : % 8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    printf("PixelBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    printf("BlockBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
     puts("");
   }
 
@@ -2841,8 +2844,8 @@ double limg_compare(const uint32_t *pImageA, const uint32_t *pImageB, const size
   const limg_ui8_4 *pA = reinterpret_cast<const limg_ui8_4 *>(pImageA);
   const limg_ui8_4 *pB = reinterpret_cast<const limg_ui8_4 *>(pImageB);
 
-  const limg_ui8_4 min = { 0, 0, 0, 0 };
-  const limg_ui8_4 max = { 0xFF, 0xFF, 0xFF, 0xFF };
+  const limg_ui8_4 min = { { { 0, 0, 0, 0 } } };
+  const limg_ui8_4 max = { { { 0xFF, 0xFF, 0xFF, 0xFF } } };
 
   if (hasAlpha)
   {

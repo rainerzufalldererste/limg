@@ -5,13 +5,26 @@
 
 #include <chrono>
 
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
+
 #define STB_IMAGE_IMPLEMENTATION (1)
 #include "stb_image.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION (1)
 #include "stb_image_write.h"
 
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
+#ifdef __GNUC__
+#define FAIL(result, msg, ...) do { printf(msg, ##__VA_ARGS__); return result; } while (false)
+#else
 #define FAIL(result, msg, ...) do { printf(msg, __VA_ARGS__); return result; } while (false)
+#endif
 
 inline void Write(const char *filename, void *pData, const size_t size)
 {
@@ -61,7 +74,7 @@ static const char Arg_ErrorFactor[] = "--error-factor";
 int32_t main(const int32_t argc, const char **pArgv)
 {
   if (argc == 1)
-    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor>]", Arg_NoWrite, Arg_ErrorFactor);
+    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor>]\n", Arg_NoWrite, Arg_ErrorFactor);
 
   const char *sourceImagePath = pArgv[1];
   bool writeEncodedImages = true;
