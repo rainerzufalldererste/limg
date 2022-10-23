@@ -2686,11 +2686,14 @@ epilogue:
 }
 
 template <size_t channels>
-void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint8_t *pScratchU8, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8])
+void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
 {
+  float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
+  uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
+
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
 
-  for (size_t y = 0; y < pCtx->sizeY; y += limg_MinBlockSize)
+  for (size_t y = y_start; y < y_end; y += limg_MinBlockSize)
   {
     for (size_t x = 0; x < pCtx->sizeX; x += limg_MinBlockSize)
     {
@@ -2701,12 +2704,12 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
       limg_encode_sum_to_decomposition_state<channels>(pCtx, x, y, rx, ry, encode_state);
 
       limg_encode_3d_output<channels> decomposition;
-      limg_encode_get_block_factors_accurate_from_state_3d_<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, pScratchFloat);
+      limg_encode_get_block_factors_accurate_from_state_3d_<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, scratchBuffer);
 
       limg_color_error_state_3d<channels> color_error_state;
       limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
 
-      uint8_t *pAu8 = pScratchU8;
+      uint8_t *pAu8 = scratch_u8;
       uint8_t *pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
       uint8_t *pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
 
@@ -2720,9 +2723,9 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
 
           limg_color_error_state_3d_get_factors<channels>(*pLine, decomposition, color_error_state, a, b, c);
 
-          *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);;
-          *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);;
-          *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);;
+          *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);
+          *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);
+          *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);
 
           pAu8++;
           pBu8++;
@@ -2732,7 +2735,7 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
         }
       }
 
-      pAu8 = pScratchU8;
+      pAu8 = scratch_u8;
       pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
       pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
 
@@ -2810,7 +2813,7 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
         }
       }
 
-      pAu8 = pScratchU8;
+      pAu8 = scratch_u8;
       pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
       pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
 
@@ -2821,7 +2824,35 @@ void limg_encode3d_test_(limg_encode_context *pCtx, float_t *pScratchFloat, uint
   }
 }
 
-limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, const bool hasAlpha, const uint32_t errorFactor)
+template <size_t channels>
+void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
+{
+  if (pThreadPool == nullptr)
+  {
+    limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, 0, pCtx->sizeY);
+  }
+  else
+  {
+    size_t thread_count = limg_thread_pool_thread_count(pThreadPool) * 4;
+    size_t y_range = ((pCtx->sizeY / limg_MinBlockSize) / thread_count) * limg_MinBlockSize;
+    size_t y_start = 0;
+
+    for (size_t i = 1; i < thread_count; i++)
+    {
+      const size_t start = y_start;
+      const size_t end = y_start + y_range;
+      y_start += y_range;
+
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, start, end); });
+    }
+
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, y_start, pCtx->sizeY); });
+
+    limg_thread_pool_await(pThreadPool);
+  }
+}
+
+limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
 {
   limg_result result = limg_success;
 
@@ -2839,7 +2870,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   ctx.maxPixelBitCrushError = 0x6 * (errorFactor / 2);
   ctx.maxBlockBitCrushError = 0x4 * (errorFactor / 2); // error is multiplied by 0x10.
   ctx.ditheringEnabled = true;
-  ctx.fastBitCrush = false;
+  ctx.fastBitCrush = fastBitCrushing;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {
@@ -2869,13 +2900,10 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
 
   size_t accum_bits[3 + 3 * 9] = { 0 };
 
-  float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
-  uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
-
   if (ctx.hasAlpha)
-    limg_encode3d_test_<4>(&ctx, scratchBuffer, scratch_u8, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits);
+    limg_encode3d_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, pThreadPool);
   else
-    limg_encode3d_test_<3>(&ctx, scratchBuffer, scratch_u8, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits);
+    limg_encode3d_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, pThreadPool);
 
 #ifdef PRINT_TEST_OUTPUT
   const size_t totalPixels = ctx.sizeX * ctx.sizeY;
