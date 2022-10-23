@@ -70,18 +70,18 @@ uint64_t ParseUInt(const char *text)
 
 static const char Arg_NoWrite[] = "--no-output";
 static const char Arg_ErrorFactor[] = "--error-factor";
-static const char Arg_FastBitCrushing[] = "--fast-bit-crushing";
+static const char Arg_AccurateBitCrushing[] = "--accurate-bit-crushing";
 static const char Arg_SingleThreaded[] = "--single-thread";
 
 int32_t main(const int32_t argc, const char **pArgv)
 {
   if (argc == 1)
-    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor> | %s | %s]\n", Arg_NoWrite, Arg_ErrorFactor, Arg_FastBitCrushing, Arg_SingleThreaded);
+    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor> | %s | %s]\n", Arg_NoWrite, Arg_ErrorFactor, Arg_AccurateBitCrushing, Arg_SingleThreaded);
 
   const char *sourceImagePath = pArgv[1];
   bool writeEncodedImages = true;
   uint32_t errorFactor = 4;
-  bool fastBitCrushing = false;
+  bool fastBitCrushing = true;
   bool useThreadPool = true;
 
   size_t sizeX = 0, sizeY = 0;
@@ -105,10 +105,10 @@ int32_t main(const int32_t argc, const char **pArgv)
         argIndex++;
         writeEncodedImages = false;
       }
-      else if (argsRemaining >= 1 && strncmp(Arg_FastBitCrushing, pArgv[argIndex], sizeof(Arg_FastBitCrushing)) == 0)
+      else if (argsRemaining >= 1 && strncmp(Arg_AccurateBitCrushing, pArgv[argIndex], sizeof(Arg_AccurateBitCrushing)) == 0)
       {
         argIndex++;
-        fastBitCrushing = true;
+        fastBitCrushing = false;
       }
       else if (argsRemaining >= 1 && strncmp(Arg_SingleThreaded, pArgv[argIndex], sizeof(Arg_SingleThreaded)) == 0)
       {
