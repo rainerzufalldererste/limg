@@ -956,6 +956,11 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
   }
 }
 
+static LIMG_INLINE int16_t limg_fast_round_int16(float in)
+{
+  return (int16_t)(in + 256.5f) - 256;
+}
+
 template <size_t channels>
 static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<channels> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
@@ -1169,12 +1174,12 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
   for (size_t i = 0; i < channels; i++)
   {
     out.avg[i] = avg[i];
-    out.dirA_min[i] = (int16_t)roundf(avg[i] + min_dirA * diff_xi_dirA[i]);
-    out.dirA_max[i] = (int16_t)roundf(avg[i] + max_dirA * diff_xi_dirA[i]);
-    out.dirB_offset[i] = (int16_t)roundf(min_dirB * diff_xi_dirB[i]);
-    out.dirB_mag[i] = (int16_t)roundf(max_dirB * diff_xi_dirB[i]);
-    out.dirC_offset[i] = (int16_t)roundf(min_dirC * diff_xi_dirC[i]);
-    out.dirC_mag[i] = (int16_t)roundf(max_dirC * diff_xi_dirC[i]);
+    out.dirA_min[i] = (int16_t)limg_fast_round_int16(avg[i] + min_dirA * diff_xi_dirA[i]);
+    out.dirA_max[i] = (int16_t)limg_fast_round_int16(avg[i] + max_dirA * diff_xi_dirA[i]);
+    out.dirB_offset[i] = (int16_t)limg_fast_round_int16(min_dirB * diff_xi_dirB[i]);
+    out.dirB_mag[i] = (int16_t)limg_fast_round_int16(max_dirB * diff_xi_dirB[i]);
+    out.dirC_offset[i] = (int16_t)limg_fast_round_int16(min_dirC * diff_xi_dirC[i]);
+    out.dirC_mag[i] = (int16_t)limg_fast_round_int16(max_dirC * diff_xi_dirC[i]);
   }
 }
 
