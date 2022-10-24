@@ -2582,7 +2582,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_c
 
   const size_t blockError = (size_t)_mm_extract_epi32(block_error_, 0);
 
-  const bool ret = ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
+  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
 
   if constexpr (limg_DiagnoseCulprits)
   {
@@ -2727,7 +2727,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_c
 
   const size_t blockError = (size_t)_mm_extract_epi32(block_error_, 0);
 
-  const bool ret = ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
+  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
 
   if constexpr (limg_DiagnoseCulprits)
   {
@@ -2849,7 +2849,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_(limg_encode_context 
     }
   }
 
-  const bool ret = ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
+  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
 
   if constexpr (limg_DiagnoseCulprits)
   {
