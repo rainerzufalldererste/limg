@@ -2930,9 +2930,9 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
     }
     else
     {
-      shift_try[0] = 6;
+      shift_try[0] = 2;
       shift_try[1] = 4;
-      shift_try[2] = 3;
+      shift_try[2] = 5;
 
       if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
       {
