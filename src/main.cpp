@@ -5,6 +5,10 @@
 
 #include <chrono>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -72,27 +76,31 @@ static const char Arg_NoWrite[] = "--no-output";
 static const char Arg_ErrorFactor[] = "--error-factor";
 static const char Arg_AccurateBitCrushing[] = "--accurate-bit-crushing";
 static const char Arg_SingleThreaded[] = "--single-thread";
+static const char Arg_ListCount[] = "--count";
+static const char Arg_List[] = "--";
+
+static bool _WriteEncodedImages = true;
+static uint32_t _ErrorFactor = 4;
+static bool _FastBitCrushing = true;
+static bool _UseThreadPool = true;
+static size_t _ListCount = 1;
 
 int32_t main(const int32_t argc, const char **pArgv)
 {
   if (argc == 1)
-    FAIL(EXIT_SUCCESS, "Usage: limg <InputFile> [%s | %s <Factor> | %s | %s]\n", Arg_NoWrite, Arg_ErrorFactor, Arg_AccurateBitCrushing, Arg_SingleThreaded);
+    FAIL(EXIT_SUCCESS, "Usage:\nlimg [<InputFile> | --] [%s | %s <Factor> | %s | %s] \n  if input file is --:\n    [%s <Count>] -- <list of files>)\n", Arg_NoWrite, Arg_ErrorFactor, Arg_AccurateBitCrushing, Arg_SingleThreaded, Arg_ListCount);
 
   const char *sourceImagePath = pArgv[1];
-  bool writeEncodedImages = true;
-  uint32_t errorFactor = 4;
-  bool fastBitCrushing = true;
-  bool useThreadPool = true;
 
   size_t sizeX = 0, sizeY = 0;
   bool hasAlpha = false;
-  const uint32_t *pSourceImage = nullptr;
+  uint32_t *pSourceImage = nullptr;
   uint32_t *pTargetImage = nullptr;
+
+  int32_t argIndex = 2;
 
   // Parse Args.
   {
-    int32_t argIndex = 2;
-
     while (true)
     {
       const int32_t argsRemaining = argc - argIndex;
@@ -103,21 +111,45 @@ int32_t main(const int32_t argc, const char **pArgv)
       if (argsRemaining >= 1 && strncmp(Arg_NoWrite, pArgv[argIndex], sizeof(Arg_NoWrite)) == 0)
       {
         argIndex++;
-        writeEncodedImages = false;
+        _WriteEncodedImages = false;
       }
       else if (argsRemaining >= 1 && strncmp(Arg_AccurateBitCrushing, pArgv[argIndex], sizeof(Arg_AccurateBitCrushing)) == 0)
       {
         argIndex++;
-        fastBitCrushing = false;
+        _FastBitCrushing = false;
       }
       else if (argsRemaining >= 1 && strncmp(Arg_SingleThreaded, pArgv[argIndex], sizeof(Arg_SingleThreaded)) == 0)
       {
         argIndex++;
-        useThreadPool = false;
+        _UseThreadPool = false;
+
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        SetThreadIdealProcessor(GetCurrentThread(), SetThreadIdealProcessor(GetCurrentThread(), MAXIMUM_PROCESSORS)); // Set to current ideal processor.
+#endif
       }
       else if (argsRemaining >= 2 && strncmp(Arg_ErrorFactor, pArgv[argIndex], sizeof(Arg_ErrorFactor)) == 0)
       {
-        errorFactor = (uint32_t)ParseUInt(pArgv[argIndex + 1]);
+        _ErrorFactor = (uint32_t)ParseUInt(pArgv[argIndex + 1]);
+        argIndex += 2;
+      }
+      else if (argsRemaining > 1 && strncmp(Arg_List, pArgv[argIndex], sizeof(Arg_List)) == 0)
+      {
+        if (strncmp(sourceImagePath, Arg_List, sizeof(Arg_List)) != 0)
+          FAIL(EXIT_FAILURE, "'%s' is only supported with input file '%s', found '%s'.\n", pArgv[argIndex], Arg_List, sourceImagePath);
+
+        _WriteEncodedImages = false;
+        sourceImagePath = nullptr;
+        argIndex++;
+
+        break;
+      }
+      else if (argsRemaining > 1 && strncmp(Arg_ListCount, pArgv[argIndex], sizeof(Arg_ListCount)) == 0)
+      {
+        if (strncmp(sourceImagePath, Arg_List, sizeof(Arg_List)) != 0)
+          FAIL(EXIT_FAILURE, "'%s' is only supported with input file '%s', found '%s'.\n", pArgv[argIndex], Arg_List, sourceImagePath);
+
+        _ListCount = ParseUInt(pArgv[argIndex + 1]);
         argIndex += 2;
       }
       else
@@ -127,81 +159,140 @@ int32_t main(const int32_t argc, const char **pArgv)
     }
   }
 
-  // Read image.
-  {
-    int32_t width, height, channels;
-    pSourceImage = reinterpret_cast<const uint32_t *>(stbi_load(sourceImagePath, &width, &height, &channels, 4));
-
-    if (pSourceImage == nullptr)
-      FAIL(EXIT_FAILURE, "Failed to read source image from '%s'.\n", sourceImagePath);
-
-    sizeX = width;
-    sizeY = height;
-    hasAlpha = (channels == 4);
-  }
-
-  // Allocate space for decoded image.
-  {
-    pTargetImage = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
-
-    if (pTargetImage == nullptr)
-      FAIL(EXIT_FAILURE, "Failed to allocate target buffer.\n");
-  }
-
-  uint32_t *pShift;
-  uint8_t *pFactorsA, *pFactorsB, *pFactorsC;
   limg_thread_pool *pThreadPool = nullptr;
 
-  // Allocate space for a, b, factors, blockError.
+  if (_UseThreadPool)
+    pThreadPool = limg_thread_pool_new(limg_threading_max_threads());
+
+  size_t pixels = 0;
+  size_t nanosecs = 0;
+
+  do
   {
-    pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
-    pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
-    pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
-    pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+    const char *filename = sourceImagePath;
 
-    if (useThreadPool)
-      pThreadPool = limg_thread_pool_new(limg_threading_max_threads());
-  }
+    if (filename == nullptr)
+    {
+      filename = pArgv[argIndex];
+      argIndex++;
 
-  // Print Image Info.
-  {
-    printf("%" PRIu64 " x %" PRIu64 " pixels.\n", sizeX, sizeY);
-  }
+      printf("\r'%s' (%" PRIi32 " remaining) (~ %8.4f Mpx/s) ...", filename, argc - argIndex, (pixels * 1e-6) / (nanosecs * 1e-9f));
+    }
 
-  // Encode.
-  {
-    const int64_t before = CurrentTimeNs();
+    // Read image.
+    {
+      int32_t width, height, channels;
+      pSourceImage = reinterpret_cast<uint32_t *>(stbi_load(filename, &width, &height, &channels, 4));
 
-    const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, hasAlpha, errorFactor, pThreadPool, fastBitCrushing);
+      if (pSourceImage == nullptr)
+        FAIL(EXIT_FAILURE, "Failed to read source image from '%s'.\n", sourceImagePath);
 
-    const int64_t after = CurrentTimeNs();
+      sizeX = width;
+      sizeY = height;
+      hasAlpha = (channels == 4);
+    }
 
-    printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
-    printf("Elapsed Time: %f ms\n", (after - before) * 1e-6f);
-    printf("Throughput: %f Mpx/S\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9f));
-  }
+    // Allocate space for decoded image.
+    if (sourceImagePath != nullptr)
+    {
+      pTargetImage = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
 
-  // Compare.
-  {
-    double mean, max;
-    const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
+      if (pTargetImage == nullptr)
+        FAIL(EXIT_FAILURE, "Failed to allocate target buffer.\n");
+    }
 
-    printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
-  }
+    uint32_t *pShift = nullptr;
+    uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr;
 
-  // Write everything.
-  if (writeEncodedImages)
-  {
-    if (stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
-      puts("Wrote decoded file.");
+    // Allocate space for a, b, factors, blockError.
+    if (sourceImagePath != nullptr)
+    {
+      pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+      pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+      pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+      pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+    }
+
+    // Print Image Info.
+    if (sourceImagePath != nullptr)
+    {
+      printf("%" PRIu64 " x %" PRIu64 " pixels.\n", sizeX, sizeY);
+    }
+
+    // Encode.
+    if (sourceImagePath != nullptr)
+    {
+      const int64_t before = CurrentTimeNs();
+
+      const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+
+      const int64_t after = CurrentTimeNs();
+
+      printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
+      printf("Elapsed Time: %f ms\n", (after - before) * 1e-6);
+      printf("Throughput: %f Mpx/s\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9));
+    }
     else
-      puts("Failed to write decoded file.");
+    {
+      const int64_t before = CurrentTimeNs();
 
-    stbi_write_bmp("C:\\data\\limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
-    stbi_write_bmp("C:\\data\\limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
-    stbi_write_bmp("C:\\data\\limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
-    stbi_write_bmp("C:\\data\\limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
-  }
+      limg_result result;
+
+      for (size_t i = 0; i < _ListCount; i++)
+        if (limg_success != (result = limg_encode3d_test_perf(pSourceImage, sizeX, sizeY, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing)))
+          FAIL(EXIT_FAILURE, "Encode failed with exit code 0x%" PRIX32 ".\n", result);
+
+      const int64_t after = CurrentTimeNs();
+
+      pixels += sizeX * sizeY * _ListCount;
+      nanosecs += after - before;
+    }
+
+    // Compare.
+    if (sourceImagePath != nullptr)
+    {
+      double mean, max;
+      const double psnr = limg_compare(pSourceImage, pTargetImage, sizeX, sizeY, hasAlpha, &mean, &max);
+
+      printf("\nImage Perceptual RGB(A) PSNR: %4.2f dB (mean: %5.3f => %7.5f%% | sqrt: %5.3f%%)\n\n", psnr, mean, (mean / max) * 100.0, (sqrt(mean) / sqrt(max)) * 100.0);
+    }
+
+    // Write everything.
+    if (_WriteEncodedImages)
+    {
+      if (stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
+        puts("Wrote decoded file.");
+      else
+        puts("Failed to write decoded file.");
+
+      stbi_write_bmp("C:\\data\\limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
+      stbi_write_bmp("C:\\data\\limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
+      stbi_write_bmp("C:\\data\\limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
+      stbi_write_bmp("C:\\data\\limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
+    }
+
+    free(pSourceImage);
+    pSourceImage = nullptr;
+
+    free(pTargetImage);
+    pTargetImage = nullptr;
+
+    free(pShift);
+    pShift = nullptr;
+
+    free(pFactorsA);
+    pFactorsA = nullptr;
+
+    free(pFactorsB);
+    pFactorsB = nullptr;
+
+    free(pFactorsC);
+    pFactorsC = nullptr;
+
+  } while (sourceImagePath == nullptr && argIndex < argc);
+
+  if (sourceImagePath == nullptr)
+    printf("\rComplete.   \nProcessed %5.3f Mpx in %5.3f sec / %5.3f mins \nThroughput: %8.5f MPx/s\n\n\n", pixels * 1e-6, nanosecs * 1e-9, (nanosecs * 1e-9) / 60.0, (pixels * 1e-6) / (nanosecs * 1e-9));
 
   return EXIT_SUCCESS;
 }

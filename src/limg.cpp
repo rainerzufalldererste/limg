@@ -3270,7 +3270,7 @@ epilogue:
   return result;
 }
 
-template <size_t channels>
+template <size_t channels, bool store_factors_shift, bool decode, bool store_accum_bits>
 void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
 {
   float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
@@ -3353,58 +3353,70 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
           }
         }
 
-        for (size_t i = 0; i < 3; i++)
+        if constexpr (store_accum_bits)
         {
-          accum_bits[i] += (8 - shift[i]) * rangeSize;
-          accum_bits[3 + i * 9 + shift[i]] += rangeSize;
+          for (size_t i = 0; i < 3; i++)
+          {
+            accum_bits[i] += (8 - shift[i]) * rangeSize;
+            accum_bits[3 + i * 9 + shift[i]] += rangeSize;
+          }
         }
       }
       else
       {
-        for (size_t i = 0; i < 3; i++)
+        if constexpr (store_accum_bits)
         {
-          accum_bits[i] += 8 * rangeSize;
-          accum_bits[3 + i * 9] += rangeSize;
+          for (size_t i = 0; i < 3; i++)
+          {
+            accum_bits[i] += 8 * rangeSize;
+            accum_bits[3 + i * 9] += rangeSize;
+          }
         }
       }
 
-      const uint8_t bit_to_pattern[9] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE, 0xFF };
-
-      const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
-
-      for (size_t oy = 0; oy < ry; oy++)
+      if constexpr (store_factors_shift)
       {
-        uint8_t *pFactorsALine = pFactorsA + (y + oy) * pCtx->sizeX + x;
-        uint8_t *pFactorsBLine = pFactorsB + (y + oy) * pCtx->sizeX + x;
-        uint8_t *pFactorsCLine = pFactorsC + (y + oy) * pCtx->sizeX + x;
-        uint32_t *pShiftLine = pShiftABCX + (y + oy) * pCtx->sizeX + x;
+        const uint8_t bit_to_pattern[9] = { 0, 0x22, 0x44, 0x66, 0x88, 0xAA, 0xCC, 0xEE, 0xFF };
 
-        for (size_t ox = 0; ox < rx; ox++)
+        const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
+
+        for (size_t oy = 0; oy < ry; oy++)
         {
-          *pFactorsALine = *pAu8 << shift[0];
-          pFactorsALine++;
-          pAu8++;
+          uint8_t *pFactorsALine = pFactorsA + (y + oy) * pCtx->sizeX + x;
+          uint8_t *pFactorsBLine = pFactorsB + (y + oy) * pCtx->sizeX + x;
+          uint8_t *pFactorsCLine = pFactorsC + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pShiftLine = pShiftABCX + (y + oy) * pCtx->sizeX + x;
 
-          *pFactorsBLine = *pBu8 << shift[1];
-          pFactorsBLine++;
-          pBu8++;
+          for (size_t ox = 0; ox < rx; ox++)
+          {
+            *pFactorsALine = *pAu8 << shift[0];
+            pFactorsALine++;
+            pAu8++;
 
-          *pFactorsCLine = *pCu8 << shift[2];
-          pFactorsCLine++;
-          pCu8++;
+            *pFactorsBLine = *pBu8 << shift[1];
+            pFactorsBLine++;
+            pBu8++;
 
-          *pShiftLine = shift_val;
-          pShiftLine++;
+            *pFactorsCLine = *pCu8 << shift[2];
+            pFactorsCLine++;
+            pCu8++;
+
+            *pShiftLine = shift_val;
+            pShiftLine++;
+          }
         }
+
+        pAu8 = scratch_u8;
+        pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
+        pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
       }
 
-      pAu8 = scratch_u8;
-      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+      if constexpr (decode)
+      {
+        uint32_t *pDecodedStart = pDecoded + y * pCtx->sizeX + x;
 
-      uint32_t *pDecodedStart = pDecoded + y * pCtx->sizeX + x;
-
-      limg_decode_block_from_factors_3d<channels>(pDecodedStart, pCtx->sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
+        limg_decode_block_from_factors_3d<channels>(pDecodedStart, pCtx->sizeX, rx, ry, pAu8, pBu8, pCu8, decomposition, shift);
+      }
     }
   }
 }
@@ -3414,7 +3426,7 @@ void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t 
 {
   if (pThreadPool == nullptr)
   {
-    limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, 0, pCtx->sizeY);
+    limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, 0, pCtx->sizeY);
   }
   else
   {
@@ -3435,10 +3447,45 @@ void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t 
       const size_t end = y_start + y_range;
       y_start += y_range;
 
-      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, start, end); });
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, start, end); });
     }
 
-    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, y_start, pCtx->sizeY); });
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, y_start, pCtx->sizeY); });
+
+    limg_thread_pool_await(pThreadPool);
+  }
+}
+
+template <size_t channels>
+void limg_encode3d_test_perf_(limg_encode_context *pCtx, limg_thread_pool *pThreadPool)
+{
+  if (pThreadPool == nullptr)
+  {
+    limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, pCtx->sizeY);
+  }
+  else
+  {
+    size_t thread_count = limg_thread_pool_thread_count(pThreadPool) * 4;
+    size_t y_range = ((pCtx->sizeY / limg_MinBlockSize) / thread_count) * limg_MinBlockSize;
+
+    if (y_range == 0)
+    {
+      thread_count = limg_thread_pool_thread_count(pThreadPool);
+      y_range = ((pCtx->sizeY / limg_MinBlockSize) / thread_count) * limg_MinBlockSize;
+    }
+
+    size_t y_start = 0;
+
+    for (size_t i = 1; i < thread_count; i++)
+    {
+      const size_t start = y_start;
+      const size_t end = y_start + y_range;
+      y_start += y_range;
+
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, start, end); });
+    }
+
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, y_start, pCtx->sizeY); });
 
     limg_thread_pool_await(pThreadPool);
   }
@@ -3527,6 +3574,68 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   }
 
 #endif
+
+  goto epilogue;
+
+epilogue:
+
+  return result;
+}
+
+
+limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
+{
+  limg_result result = limg_success;
+
+  limg_encode_context ctx;
+  memset(&ctx, 0, sizeof(ctx));
+
+  ctx.pSourceImage = pIn;
+  ctx.sizeX = sizeX;
+  ctx.sizeY = sizeY;
+  ctx.hasAlpha = hasAlpha;
+  ctx.maxPixelBlockError = 0x12 * (errorFactor);
+  ctx.maxBlockPixelError = 0x1C * (errorFactor / 3); // error is multiplied by 0x10.
+  ctx.maxPixelChannelBlockError = 0x40 * (errorFactor / 2);
+  ctx.maxBlockExpandError = 0x20 * (errorFactor);
+  ctx.maxPixelBitCrushError = 0x6 * (errorFactor / 2);
+  ctx.maxBlockBitCrushError = 0x4 * (errorFactor / 2); // error is multiplied by 0x10.
+  ctx.ditheringEnabled = true;
+  ctx.fastBitCrush = fastBitCrushing;
+  ctx.guessCrush = true;
+
+  if constexpr (limg_LuminanceDependentPixelError)
+  {
+    ctx.maxPixelBlockError *= 0x10;
+    ctx.maxBlockPixelError *= 0x10;
+    ctx.maxPixelBitCrushError *= 0x10;
+    ctx.maxBlockBitCrushError *= 0x10;
+  }
+
+  if constexpr (limg_ColorDependentBlockError)
+  {
+    //ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
+    //ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
+    ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 6 : 4);
+    ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 6 : 4);
+    ctx.maxPixelBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
+    ctx.maxBlockBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
+  }
+
+  if constexpr (limg_RetrievePreciseDecomposition == 2)
+  {
+    ctx.maxPixelBlockError *= 0x1;
+    ctx.maxBlockPixelError *= 0x1;
+    ctx.maxPixelBitCrushError *= 0x1;
+    ctx.maxBlockBitCrushError *= 0x1;
+  }
+
+  _DetectCPUFeatures();
+
+  if (ctx.hasAlpha)
+    limg_encode3d_test_perf_<4>(&ctx, pThreadPool);
+  else
+    limg_encode3d_test_perf_<3>(&ctx, pThreadPool);
 
   goto epilogue;
 

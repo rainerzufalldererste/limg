@@ -34,6 +34,7 @@ void limg_thread_pool_ThreadFunc(limg_thread_pool *pThreadPool, const size_t ind
 {
 #ifdef _WIN32
   SetThreadIdealProcessor(GetCurrentThread(), (DWORD)index);
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 #else
   (void)index;
 #endif
