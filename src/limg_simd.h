@@ -1,10 +1,12 @@
 #ifndef limg_simd_h__
 #define limg_simd_h__
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 #include <intrin.h>
 #else
 #include <x86intrin.h>
+
+#define __debugbreak() __builtin_trap()
 #endif
 
 //////////////////////////////////////////////////////////////////////////
