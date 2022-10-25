@@ -778,7 +778,7 @@ static void limg_decode_block_from_factors_3d_3_sse41(uint32_t *pOut, const size
   constexpr uint32_t bias = 1 << 7;
 
   const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]);
+  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
   const __m128i bias_ = _mm_set1_epi32(bias);
   const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0xFFFF, minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value, ensure that alpha will be clamped to 0xFF.
   const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0xFFFF, minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value, ensure that alpha will be clamped to 0xFF.
@@ -804,7 +804,7 @@ static void limg_decode_block_from_factors_3d_3_sse41(uint32_t *pOut, const size
       pC++;
 
       const __m128i encoded_ = _mm_set_epi32(0, fC, fB, fA);
-      const __m128i decoded_ = _mm_add_epi32(_mm_mullo_epi32(encoded_, shift_mul_), _mm_mullo_epi32(encoded_, decode_bias_)); // this could be `_mm_sllv_epi32` with AVX2.
+      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
       const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
       const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
       const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
@@ -876,7 +876,7 @@ static void limg_decode_block_from_factors_3d_4_sse41(uint32_t *pOut, const size
   constexpr uint32_t bias = 1 << 7;
 
   const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]);
+  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
   const __m128i bias_ = _mm_set1_epi32(bias);
   const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minA[3], minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value.
   const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minB[3], minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value.
@@ -902,7 +902,7 @@ static void limg_decode_block_from_factors_3d_4_sse41(uint32_t *pOut, const size
       pC++;
 
       const __m128i encoded_ = _mm_set_epi32(0, fC, fB, fA);
-      const __m128i decoded_ = _mm_add_epi32(_mm_mullo_epi32(encoded_, shift_mul_), _mm_mullo_epi32(encoded_, decode_bias_)); // this could be `_mm_sllv_epi32` with AVX2.
+      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
       const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
       const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
       const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
@@ -1187,7 +1187,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
   }
 }
 
-static LIMG_INLINE int16_t limg_fast_round_int16(float in)
+static LIMG_INLINE int16_t limg_fast_round_int16(const float in)
 {
   return (int16_t)(in + 256.5f) - 256;
 }
@@ -2506,7 +2506,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_c
   constexpr uint32_t bias = 1 << 7;
   
   const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]);
+  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
   const __m128i bias_ = _mm_set1_epi32(bias);
   const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0, minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value.
   const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0, minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value.
@@ -2544,7 +2544,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_c
       pC++;
 
       const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
-      const __m128i decoded_ = _mm_add_epi32(_mm_mullo_epi32(encoded_, shift_mul_), _mm_mullo_epi32(encoded_, decode_bias_)); // this could be `_mm_sllv_epi32` with AVX2.
+      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
       const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
       const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
       const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
@@ -2651,7 +2651,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_c
   constexpr uint32_t bias = 1 << 7;
 
   const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]);
+  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
   const __m128i bias_ = _mm_set1_epi32(bias);
   const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minA[3], minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value.
   const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minB[3], minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value.
@@ -2689,7 +2689,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_c
       pC++;
 
       const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
-      const __m128i decoded_ = _mm_add_epi32(_mm_mullo_epi32(encoded_, shift_mul_), _mm_mullo_epi32(encoded_, decode_bias_)); // this could be `_mm_sllv_epi32` with AVX2.
+      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
       const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
       const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
       const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
