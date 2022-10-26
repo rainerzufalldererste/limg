@@ -260,15 +260,15 @@ int32_t main(const int32_t argc, const char **pArgv)
     // Write everything.
     if (_WriteEncodedImages)
     {
-      if (stbi_write_bmp("C:\\data\\limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
+      if (stbi_write_bmp("limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
         puts("Wrote decoded file.");
       else
         puts("Failed to write decoded file.");
 
-      stbi_write_bmp("C:\\data\\limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
-      stbi_write_bmp("C:\\data\\limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
-      stbi_write_bmp("C:\\data\\limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
-      stbi_write_bmp("C:\\data\\limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
+      stbi_write_bmp("limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
+      stbi_write_bmp("limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
+      stbi_write_bmp("limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
+      stbi_write_bmp("limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
     }
 
     free(pSourceImage);

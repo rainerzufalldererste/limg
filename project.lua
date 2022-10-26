@@ -61,3 +61,7 @@ filter { "system:windows", "configurations:Release" }
 filter { "system:windows", "configurations:Debug" }
   ignoredefaultlibraries { "libcmt" }
 filter { }
+
+filter { "system:linux" }
+  links { "pthread" }
+filter { }

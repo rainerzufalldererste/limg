@@ -4,6 +4,9 @@
 #include "limg_internal.h"
 #include "limg_simd.h"
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatA(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<3> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 3;
@@ -122,7 +125,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatA(limg_e
 
       block_error_ = _mm_add_epi32(block_error_, error_1234_);
 
-      if (_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
       {
         if constexpr (limg_DiagnoseCulprits)
         {
@@ -153,6 +156,9 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatA(limg_e
   return ret;
 }
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatB(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<3> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 3;
@@ -271,7 +277,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatB(limg_e
 
       block_error_ = _mm_add_epi32(block_error_, error_1234_);
 
-      if (_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
       {
         if constexpr (limg_DiagnoseCulprits)
         {
@@ -302,6 +308,9 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatB(limg_e
   return ret;
 }
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<3> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 3;
@@ -417,7 +426,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_c
 
       block_error_ = _mm_add_epi32(block_error_, error_1234_);
 
-      if (_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
       {
         if constexpr (limg_DiagnoseCulprits)
         {
@@ -448,6 +457,9 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_c
   return ret;
 }
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<4> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 4;
@@ -563,7 +575,7 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_c
 
       block_error_ = _mm_add_epi32(block_error_, error_1234_);
 
-      if (_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
       {
         if constexpr (limg_DiagnoseCulprits)
         {

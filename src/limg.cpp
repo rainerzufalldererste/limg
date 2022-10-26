@@ -388,6 +388,9 @@ static void limg_decode_block_from_factors(uint32_t *pOut, const size_t sizeX, c
   }
 }
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static void limg_decode_block_from_factors_3d_3_sse41(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<3> &in, const uint8_t shift[3])
 {
   constexpr size_t channels = 3;
@@ -486,6 +489,9 @@ static void limg_decode_block_from_factors_3d_3_sse41(uint32_t *pOut, const size
   }
 }
 
+#ifndef _MSC_VER
+__attribute__((target("sse4.1")))
+#endif
 static void limg_decode_block_from_factors_3d_4_sse41(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<4> &in, const uint8_t shift[3])
 {
   constexpr size_t channels = 4;

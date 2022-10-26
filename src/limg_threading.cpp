@@ -65,12 +65,12 @@ void limg_thread_pool_ThreadFunc(limg_thread_pool *pThreadPool, const size_t ind
 
 limg_thread_pool::limg_thread_pool(const size_t threads) :
   tasks(),
-  isRunning(true),
   pThreads(nullptr),
   threadCount(threads),
+  taskCount(0),
+  isRunning(true),
   mutex(),
-  condition_var(),
-  taskCount(0)
+  condition_var()
 {
   pThreads = reinterpret_cast<std::thread *>(malloc(sizeof(std::thread) * threads));
 
