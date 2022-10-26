@@ -259,12 +259,13 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatB(limg_e
 
       const __m128 diff_ = _mm_sub_ps(px_, dec_);
       const __m128 diff_sq_ = _mm_mul_ps(diff_, diff_);
+      const __m128i diff_sq_32 = _mm_cvtps_epi32(diff_sq_);
 
       const __m128 diff_sq_red_ = _mm_shuffle_ps(diff_sq_, diff_sq_, _MM_SHUFFLE(0, 0, 0, 0));
       const __m128i cmp_red_thresh_ = _mm_or_si128(index13_, _mm_castps_si128(_mm_cmplt_ps(diff_sq_red_, redThreshold_)));
       const __m128i col_error_mul_ = _mm_or_si128(_mm_and_si128(cmp_red_thresh_, low_red_error_cmp_flag_to_mul_), _mm_andnot_si128(cmp_red_thresh_, high_red_error_cmp_flag_to_mul_));
 
-      const __m128i error_ = _mm_mullo_epi32(_mm_cvtps_epi32(diff_sq_), col_error_mul_);
+      const __m128i error_ = _mm_mullo_epi32(diff_sq_32, col_error_mul_);
       const __m128i error_13_24_ = _mm_add_epi32(error_, _mm_srli_si128(error_, sizeof(uint32_t) * 2));
       const __m128i error_1234_ = _mm_add_epi32(error_13_24_, _mm_srli_si128(error_, sizeof(uint32_t)));
 
