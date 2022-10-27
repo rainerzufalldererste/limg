@@ -271,3 +271,6 @@ Makefile
 # Additional Files
 builds/*
 * Advisor Result*/
+
+# Bitmaps
+*.bmp
