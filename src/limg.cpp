@@ -2655,7 +2655,7 @@ epilogue:
 }
 
 template <size_t channels, bool store_factors_shift, bool decode, bool store_accum_bits>
-void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
+void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
 {
   float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
   uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
@@ -2769,12 +2769,47 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
 
         const uint32_t shift_val = 0xFF000000 | (bit_to_pattern[shift[0]] << 16) | (bit_to_pattern[shift[1]] << 8) | bit_to_pattern[shift[2]];
 
+        uint32_t colAMin = 0;
+        uint32_t colAMax = 0;
+        uint32_t colBMin = 0;
+        uint32_t colBMax = 0;
+        uint32_t colCMin = 0;
+        uint32_t colCMax = 0;
+
+        uint8_t channelOffset[4] = { 0, 8, 16, 24 };
+
+        for (size_t i = 0; i < channels; i++)
+        {
+          colAMin |= (uint32_t)limgClamp((int32_t)decomposition.dirA_min[i], 0, 0xFF) << channelOffset[i];
+          colAMax |= (uint32_t)limgClamp((int32_t)decomposition.dirA_max[i], 0, 0xFF) << channelOffset[i];
+          colBMin |= (uint32_t)limgClamp((int32_t)decomposition.dirB_offset[i] + 0x80, 0, 0xFF) << channelOffset[i];
+          colBMax |= (uint32_t)limgClamp((int32_t)decomposition.dirB_mag[i] + 0x80, 0, 0xFF) << channelOffset[i];
+          colCMin |= (uint32_t)limgClamp((int32_t)decomposition.dirC_offset[i] + 0x80, 0, 0xFF) << channelOffset[i];
+          colCMax |= (uint32_t)limgClamp((int32_t)decomposition.dirC_mag[i] + 0x80, 0, 0xFF) << channelOffset[i];
+        }
+
+        if constexpr (channels == 3)
+        {
+          colAMin |= 0xFF000000;
+          colAMax |= 0xFF000000;
+          colBMin |= 0xFF000000;
+          colBMax |= 0xFF000000;
+          colCMin |= 0xFF000000;
+          colCMax |= 0xFF000000;
+        }
+
         for (size_t oy = 0; oy < ry; oy++)
         {
           uint8_t *pFactorsALine = pFactorsA + (y + oy) * pCtx->sizeX + x;
           uint8_t *pFactorsBLine = pFactorsB + (y + oy) * pCtx->sizeX + x;
           uint8_t *pFactorsCLine = pFactorsC + (y + oy) * pCtx->sizeX + x;
           uint32_t *pShiftLine = pShiftABCX + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColAMinLine = pColAMin + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColAMaxLine = pColAMax + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColBMinLine = pColBMin + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColBMaxLine = pColBMax + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColCMinLine = pColCMin + (y + oy) * pCtx->sizeX + x;
+          uint32_t *pColCMaxLine = pColCMax + (y + oy) * pCtx->sizeX + x;
 
           for (size_t ox = 0; ox < rx; ox++)
           {
@@ -2792,6 +2827,25 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
 
             *pShiftLine = shift_val;
             pShiftLine++;
+
+            *pColAMinLine = colAMin;
+            pColAMinLine++;
+
+            *pColAMaxLine = colAMax;
+            pColAMaxLine++;
+
+            *pColBMinLine = colBMin;
+            pColBMinLine++;
+
+            *pColBMaxLine = colBMax;
+            pColBMaxLine++;
+
+            *pColCMinLine = colCMin;
+            pColCMinLine++;
+
+            *pColCMaxLine = colCMax;
+            pColCMaxLine++;
+
           }
         }
 
@@ -2811,11 +2865,11 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
 }
 
 template <size_t channels>
-void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
+void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
 {
   if (pThreadPool == nullptr)
   {
-    limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, 0, pCtx->sizeY);
+    limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, accum_bits, 0, pCtx->sizeY);
   }
   else
   {
@@ -2836,10 +2890,10 @@ void limg_encode3d_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t 
       const size_t end = y_start + y_range;
       y_start += y_range;
 
-      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, start, end); });
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, accum_bits, start, end); });
     }
 
-    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, y_start, pCtx->sizeY); });
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, true, true, true>(pCtx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, accum_bits, y_start, pCtx->sizeY); });
 
     limg_thread_pool_await(pThreadPool);
   }
@@ -2850,7 +2904,7 @@ void limg_encode3d_test_perf_(limg_encode_context *pCtx, limg_thread_pool *pThre
 {
   if (pThreadPool == nullptr)
   {
-    limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, pCtx->sizeY);
+    limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, pCtx->sizeY);
   }
   else
   {
@@ -2871,16 +2925,16 @@ void limg_encode3d_test_perf_(limg_encode_context *pCtx, limg_thread_pool *pThre
       const size_t end = y_start + y_range;
       y_start += y_range;
 
-      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, start, end); });
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, start, end); });
     }
 
-    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, y_start, pCtx->sizeY); });
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_test_y_range<channels, false, false, false>(pCtx, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, y_start, pCtx->sizeY); });
 
     limg_thread_pool_await(pThreadPool);
   }
 }
 
-limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
+limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
 {
   limg_result result = limg_success;
 
@@ -2932,9 +2986,9 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   size_t accum_bits[3 + 3 * 9] = { 0 };
 
   if (ctx.hasAlpha)
-    limg_encode3d_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, pThreadPool);
+    limg_encode3d_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, accum_bits, pThreadPool);
   else
-    limg_encode3d_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, accum_bits, pThreadPool);
+    limg_encode3d_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, accum_bits, pThreadPool);
 
 #ifdef PRINT_TEST_OUTPUT
   const size_t totalPixels = ctx.sizeX * ctx.sizeY;
@@ -2970,7 +3024,6 @@ epilogue:
 
   return result;
 }
-
 
 limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
 {

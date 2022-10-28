@@ -205,6 +205,7 @@ int32_t main(const int32_t argc, const char **pArgv)
 
     uint32_t *pShift = nullptr;
     uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr;
+    uint32_t *pColAMin = nullptr, *pColAMax = nullptr, *pColBMin = nullptr, *pColBMax = nullptr, *pColCMin = nullptr, *pColCMax = nullptr;
 
     // Allocate space for a, b, factors, blockError.
     if (sourceImagePath != nullptr)
@@ -213,6 +214,12 @@ int32_t main(const int32_t argc, const char **pArgv)
       pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColAMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColAMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColBMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColBMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColCMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pColCMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     }
 
     // Print Image Info.
@@ -226,7 +233,7 @@ int32_t main(const int32_t argc, const char **pArgv)
     {
       const int64_t before = CurrentTimeNs();
 
-      const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+      const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
 
       const int64_t after = CurrentTimeNs();
 
@@ -318,6 +325,12 @@ int32_t main(const int32_t argc, const char **pArgv)
       stbi_write_bmp("limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
       stbi_write_bmp("limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
       stbi_write_bmp("limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
+      stbi_write_bmp("limg_col_a_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMin);
+      stbi_write_bmp("limg_col_a_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMax);
+      stbi_write_bmp("limg_col_b_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMin);
+      stbi_write_bmp("limg_col_b_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMax);
+      stbi_write_bmp("limg_col_c_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMin);
+      stbi_write_bmp("limg_col_c_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMax);
     }
 
     free(pSourceImage);
@@ -337,6 +350,24 @@ int32_t main(const int32_t argc, const char **pArgv)
 
     free(pFactorsC);
     pFactorsC = nullptr;
+
+    free(pColAMin);
+    pColAMin = nullptr;
+
+    free(pColAMax);
+    pColAMax = nullptr;
+
+    free(pColBMin);
+    pColBMin = nullptr;
+
+    free(pColBMax);
+    pColBMax = nullptr;
+
+    free(pColCMin);
+    pColCMin = nullptr;
+
+    free(pColCMax);
+    pColCMax = nullptr;
 
   } while (sourceImagePath == nullptr && argIndex < argc);
 
