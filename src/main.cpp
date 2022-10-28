@@ -166,6 +166,7 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   size_t pixels = 0;
   size_t nanosecs = 0;
+  const bool singlePerfEval = sourceImagePath == nullptr && argc == argIndex + 1 && _ListCount > 1;
 
   do
   {
@@ -176,7 +177,8 @@ int32_t main(const int32_t argc, const char **pArgv)
       filename = pArgv[argIndex];
       argIndex++;
 
-      printf("\r'%s' (%" PRIi32 " remaining) (~ %8.4f Mpx/s) ...", filename, argc - argIndex, (pixels * 1e-6) / (nanosecs * 1e-9f));
+      if (!singlePerfEval)
+        printf("\r'%s' (%" PRIi32 " remaining) (~ %8.4f Mpx/s) ...", filename, argc - argIndex, (pixels * 1e-6) / (nanosecs * 1e-9f));
     }
 
     // Read image.
@@ -231,6 +233,53 @@ int32_t main(const int32_t argc, const char **pArgv)
       printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
       printf("Elapsed Time: %f ms\n", (after - before) * 1e-6);
       printf("Throughput: %f Mpx/s\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9));
+    }
+    else if (singlePerfEval)
+    {
+      uint64_t timeSum = 0, min = UINT64_MAX, max = 0;
+      uint64_t *pTimeNs = reinterpret_cast<uint64_t *>(malloc(sizeof(uint64_t) * _ListCount));
+
+      if (pTimeNs == nullptr)
+        FAIL(EXIT_FAILURE, "Failed to allocate memory.\n");
+
+      const double megapixels = (sizeX * sizeY * 1e-6);
+
+      for (size_t i = 0; i < _ListCount; i++)
+      {
+        const int64_t before = CurrentTimeNs();      
+        const limg_result result = limg_encode3d_test_perf(pSourceImage, sizeX, sizeY, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+        const int64_t after = CurrentTimeNs();
+
+        if (limg_success != result)
+          FAIL(EXIT_FAILURE, "Encode failed with exit code 0x%" PRIX32 ".\n", result);
+
+        const uint64_t timeNs = after - before;
+        timeSum += timeNs;
+        pTimeNs[i] = timeNs;
+
+        if (timeNs > max)
+          max = timeNs;
+
+        if (timeNs < min)
+          min = timeNs;
+
+        printf("\rThroughput: ~%5.3f Mpx/s", megapixels / (timeNs * 1e-9));
+      }
+
+      const double mean = timeSum / (double)_ListCount;
+
+      double std_dev = 0;
+
+      for (size_t i = 0; i < _ListCount; i++)
+      {
+        const double diff = pTimeNs[i] - mean;
+        std_dev += diff * diff;
+      }
+
+      std_dev = sqrt(std_dev / (double)(_ListCount - 1));
+
+      printf("\rMean Elapsed Time: %8.4f ms (%8.4f - %8.4f ms | %8.4f - %8.4f ms std dev)\n", mean * 1e-6, min * 1e-6, max * 1e-6, (mean - std_dev) * 1e-6, (mean + std_dev) * 1e-6);
+      printf("Throughput: %5.3f Mpx/s (%5.3f - %5.3f Mpx/s | %5.3f - %5.3f Mpx/s std dev)\n", megapixels / (mean * 1e-9), megapixels / (max * 1e-9), megapixels / (min * 1e-9), megapixels / ((mean + std_dev) * 1e-9), megapixels / ((mean - std_dev) * 1e-9));
     }
     else
     {
@@ -291,7 +340,7 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   } while (sourceImagePath == nullptr && argIndex < argc);
 
-  if (sourceImagePath == nullptr)
+  if (sourceImagePath == nullptr && !singlePerfEval)
     printf("\rComplete.   \nProcessed %5.3f Mpx in %5.3f sec / %5.3f mins \nThroughput: %8.5f MPx/s\n\n\n", pixels * 1e-6, nanosecs * 1e-9, (nanosecs * 1e-9) / 60.0, (pixels * 1e-6) / (nanosecs * 1e-9));
 
   return EXIT_SUCCESS;
