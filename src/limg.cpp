@@ -24,6 +24,50 @@ static LIMG_INLINE void limg_cross(const T a[3], const T b[3], T out[3])
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
+template <typename T>
+static LIMG_INLINE void limg_gram_schmidt_orthogonalization(const T a[4], const T b[4], T out[4])
+{
+  const T y2 = -((a[0] - a[3]) * b[1] + (b[3] - b[0]) * a[1]);
+  const T z2 = -((a[0] - a[3]) * b[2] + (b[3] - b[0]) * a[2]);
+
+  const T a0_2 = a[0] * a[0];
+  const T a1_2 = a[1] * a[1];
+  const T a2_2 = a[2] * a[2];
+  const T a3_2 = a[3] * a[3];
+
+  const T b0_2 = b[0] * b[0];
+  const T b1_2 = b[1] * b[1];
+  const T b2_2 = b[2] * b[2];
+  const T b3_2 = b[3] * b[3];
+
+  const T a0_a1 = a[0] * a[1];
+  const T a0_b0 = a[0] * b[0];
+  const T a0_b3 = a[0] * b[3];
+  const T a1_b1 = a[1] * b[1];
+  const T a1_b3 = a[1] * b[3];
+  const T a2_b2 = a[2] * b[2];
+  const T a3_b0 = a[3] * b[0];
+  const T a3_b3 = a[3] * b[3];
+  const T a1_b0 = a[1] * b[0];
+  const T a0_a3 = a[0] * a[3];
+
+  const T a3_b0_2 = a[3] * b0_2;
+  const T a3_a0_b3 = a3_b3 * a[0];
+  const T a3_2_b0 = a3_2 * b[0];
+  const T a3_b3_b0 = a3_b3 * b[0];
+  const T b3_2_a0 = b3_2 * a[0];
+  const T a0_b0pa3_b3 = (a0_b0 + a3_b3);
+  const T a0pa3 = a[0] + a[3];
+
+  out[0] = ((a0_a1 * b[1] - b[0] * a1_2 - a3_2_b0 + a3_a0_b3) * b[2] + (-a[0] * b1_2 + a1_b0 * b[1] + a3_b3_b0 - b3_2_a0) * a[2]) * z2 + (-a0_a1 * y2 + a1_2 + a3_2 - a0_a3) * b2_2 + ((a[0] * b[1] + a1_b0) * y2 - 2 * a1_b1 - 2 * a3_b3 + a3_b0 + a0_b3) * a2_b2 + (-b[0] * b[1] * y2 + b1_2 + b3_2 - b[3] * b[0]) * a2_2 + ((a3_a0_b3 - a3_2_b0) * b[1] + (a3_b3_b0 - b3_2_a0) * a[1]) * y2 + (a3_2 - a0_a3) * b1_2 + (-2 * a3_b3 + a3_b0 + a0_b3) * a1_b1 + (b3_2 - b[3] * b[0]) * a1_2;
+
+  out[1] = (((-a0_2 - a3_2) * b[1] + a0_b0pa3_b3 * a[1]) * b[2] + (a0_b0pa3_b3 * b[1] + (-b0_2 - b3_2) * a[1]) * a[2]) * z2 + ((a0_2 + a3_2) * y2 + (-a[0] - a[3]) * a[1]) * b2_2 + ((-2 * a0_b0 - 2 * a3_b3) * y2 + a0pa3 * b[1] + (b[0] + b[3]) * a[1]) * a2_b2 + ((b0_2 + b3_2) * y2 + (-b[0] - b[3]) * b[1]) * a2_2 + (a3_2 * b0_2 - 2 * a3_b3 * a0_b0 + b3_2 * a0_2) * y2 + ((a3_a0_b3 - a3_2_b0) + a[3] * a0_b0 - b[3] * a0_2) * b[1] + ((a3_b3_b0 - b3_2_a0) - a3_b0_2 + b[3] * a0_b0) * a[1];
+
+  out[2] = ((a0_2 + a3_2) * b1_2 + (-2 * a0_b0 - 2 * a3_b3) * a1_b1 + (b0_2 + b3_2) * a1_2 + a3_2 * b0_2 - 2 * a3_b3 * a0_b0 + b3_2 * a0_2) * z2 + (((-a0_2 - a3_2) * b[1] + a0_b0pa3_b3 * a[1]) * y2 + a0pa3 * a1_b1 + (-b[0] - b[3]) * a1_2 + (a3_a0_b3 - a3_2_b0) + a[3] * a0_b0 - b[3] * a0_2) * b[2] + ((a0_b0pa3_b3 * b[1] + (-b0_2 - b3_2) * a[1]) * y2 + (-a[0] - a[3]) * b1_2 + (b[0] + b[3]) * a1_b1 + (a3_b3_b0 - b3_2_a0) - a3_b0_2 + b[3] * a0_b0) * a[2];
+
+  out[3] = ((a[3] * a1_b1 - b[3] * a1_2 + a[3] * a0_b0 - b[3] * a0_2) * b[2] + (-a[3] * b1_2 + a1_b3 * b[1] - a3_b0_2 + b[3] * a0_b0) * a[2]) * z2 + (-a[3] * a[1] * y2 + a1_2 - a0_a3 + a0_2) * b2_2 + ((a[3] * b[1] + a1_b3) * y2 - 2 * a1_b1 + (a3_b0 + a0_b3) - 2 * a0_b0) * a2_b2 + (-b[3] * b[1] * y2 + b1_2 - b[3] * b[0] + b0_2) * a2_2 + ((a[3] * a0_b0 - b[3] * a0_2) * b[1] + (b[3] * a0_b0 - a3_b0_2) * a[1]) * y2 + (1 * a0_2 - a0_a3) * b1_2 + ((a3_b0 + a0_b3) - 2 * a0_b0) * a1_b1 + (1 * b0_2 - b[3] * b[0]) * a1_2;
+}
+
 template <size_t channels>
 LIMG_INLINE static size_t limg_color_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
 {
@@ -1023,7 +1067,10 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirB[i] *= inv_count;
 
-    limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
+    if constexpr (channels == 3)
+      limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
+    else
+      limg_gram_schmidt_orthogonalization(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
 
     pEstimate = pScratch;
 
