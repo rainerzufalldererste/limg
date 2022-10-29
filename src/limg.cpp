@@ -1344,11 +1344,11 @@ static LIMG_INLINE void limg_encode_sum_to_decomposition_state(limg_encode_conte
   for (size_t i = 0; i < channels; i++)
     state.sum[i] = 0;
 
-  for (size_t oy = offsetY; oy < rangeY; oy++)
+  for (size_t oy = 0; oy < rangeY; oy++)
   {
-    const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + oy * pCtx->sizeX + offsetX);
+    const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + (offsetY + oy) * pCtx->sizeX + offsetX);
 
-    for (size_t ox = offsetX; ox < rangeX; ox++)
+    for (size_t ox = 0; ox < rangeX; ox++)
     {
       for (size_t i = 0; i < channels; i++)
         state.sum[i] += (*pLine)[i];
