@@ -51,16 +51,7 @@ For reference, this was the original image:
 
 You can compare it to the compressed image here:
 
-<style>
-  div#comparison { width: 1024px; height: 618px; overflow: hidden; }
-  div#comparison figure { background-image: url(https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/original.png); background-size: cover; position: relative; font-size: 0; width: 100%; height: 100%; margin: 0; }
-  div#comparison figure > img { position: relative; width: 100%; }
-  div#comparison figure div { background-image: url(https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/image.png); background-size: cover; position: absolute; width: 50%; overflow: hidden; bottom: 0; height: 100%; box-shadow: #fff 0 0 1pt; }
-  input[type=range] { -webkit-appearance:none; -moz-appearance:none; position: relative; top: -2rem; left: 10%; width: 80%; height: 1pt; border-radius: 1pt; background: linear-gradient(90deg, transparent, white, transparent); }
-  input[type=range]:focus, input[type=range]:active { outline: none; border: none; }
-  input[type=range]::-moz-range-track { -moz-appearance:none; height: 10px; width: 50%; background-color: transparent; position: relative; outline: none; }
-  input[type=range]::-webkit-slider-thumb, input[type=range]::-moz-range-thumb { -moz-appearance: none; width: 10pt; height: 10pt; background: #fff; border-radius: 10pt; border: none; box-shadow: #00000033 0 0 2pt; }
-</style>
+<link rel="stylesheet" href="https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/style.css" />
 <div id="comparison">
   <figure>
     <div id="divisor"></div>
