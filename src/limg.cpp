@@ -1,742 +1,10 @@
 #include "limg.h"
 
 #include "limg_simd.h"
-#include "limg_bit_crush_simd.h"
+#include "limg_bit_crush.h"
+#include "limg_decode.h"
 
 //////////////////////////////////////////////////////////////////////////
-
-template <typename T, size_t channels>
-static LIMG_INLINE T limg_dot(const T a[channels], const T b[channels])
-{
-  T sum = (T)0;
-
-  for (size_t i = 0; i < channels; i++)
-    sum += a[i] * b[i];
-
-  return sum;
-}
-
-template <typename T>
-static LIMG_INLINE void limg_cross(const T a[3], const T b[3], T out[3])
-{
-  out[0] = a[1] * b[2] - a[2] * b[1];
-  out[1] = a[2] * b[0] - a[0] * b[2];
-  out[2] = a[0] * b[1] - a[1] * b[0];
-}
-
-template <typename T>
-static LIMG_INLINE void limg_gram_schmidt_orthogonalization(const T a[4], const T b[4], T out[4])
-{
-  const T y2 = -((a[0] - a[3]) * b[1] + (b[3] - b[0]) * a[1]);
-  const T z2 = -((a[0] - a[3]) * b[2] + (b[3] - b[0]) * a[2]);
-
-  const T a0_2 = a[0] * a[0];
-  const T a1_2 = a[1] * a[1];
-  const T a2_2 = a[2] * a[2];
-  const T a3_2 = a[3] * a[3];
-
-  const T b0_2 = b[0] * b[0];
-  const T b1_2 = b[1] * b[1];
-  const T b2_2 = b[2] * b[2];
-  const T b3_2 = b[3] * b[3];
-
-  const T a0_a1 = a[0] * a[1];
-  const T a0_b0 = a[0] * b[0];
-  const T a0_b3 = a[0] * b[3];
-  const T a1_b1 = a[1] * b[1];
-  const T a1_b3 = a[1] * b[3];
-  const T a2_b2 = a[2] * b[2];
-  const T a3_b0 = a[3] * b[0];
-  const T a3_b3 = a[3] * b[3];
-  const T a1_b0 = a[1] * b[0];
-  const T a0_a3 = a[0] * a[3];
-
-  const T a3_b0_2 = a[3] * b0_2;
-  const T a3_a0_b3 = a3_b3 * a[0];
-  const T a3_2_b0 = a3_2 * b[0];
-  const T a3_b3_b0 = a3_b3 * b[0];
-  const T b3_2_a0 = b3_2 * a[0];
-  const T a0_b0pa3_b3 = (a0_b0 + a3_b3);
-  const T a0pa3 = a[0] + a[3];
-
-  out[0] = ((a0_a1 * b[1] - b[0] * a1_2 - a3_2_b0 + a3_a0_b3) * b[2] + (-a[0] * b1_2 + a1_b0 * b[1] + a3_b3_b0 - b3_2_a0) * a[2]) * z2 + (-a0_a1 * y2 + a1_2 + a3_2 - a0_a3) * b2_2 + ((a[0] * b[1] + a1_b0) * y2 - 2 * a1_b1 - 2 * a3_b3 + a3_b0 + a0_b3) * a2_b2 + (-b[0] * b[1] * y2 + b1_2 + b3_2 - b[3] * b[0]) * a2_2 + ((a3_a0_b3 - a3_2_b0) * b[1] + (a3_b3_b0 - b3_2_a0) * a[1]) * y2 + (a3_2 - a0_a3) * b1_2 + (-2 * a3_b3 + a3_b0 + a0_b3) * a1_b1 + (b3_2 - b[3] * b[0]) * a1_2;
-
-  out[1] = (((-a0_2 - a3_2) * b[1] + a0_b0pa3_b3 * a[1]) * b[2] + (a0_b0pa3_b3 * b[1] + (-b0_2 - b3_2) * a[1]) * a[2]) * z2 + ((a0_2 + a3_2) * y2 + (-a[0] - a[3]) * a[1]) * b2_2 + ((-2 * a0_b0 - 2 * a3_b3) * y2 + a0pa3 * b[1] + (b[0] + b[3]) * a[1]) * a2_b2 + ((b0_2 + b3_2) * y2 + (-b[0] - b[3]) * b[1]) * a2_2 + (a3_2 * b0_2 - 2 * a3_b3 * a0_b0 + b3_2 * a0_2) * y2 + ((a3_a0_b3 - a3_2_b0) + a[3] * a0_b0 - b[3] * a0_2) * b[1] + ((a3_b3_b0 - b3_2_a0) - a3_b0_2 + b[3] * a0_b0) * a[1];
-
-  out[2] = ((a0_2 + a3_2) * b1_2 + (-2 * a0_b0 - 2 * a3_b3) * a1_b1 + (b0_2 + b3_2) * a1_2 + a3_2 * b0_2 - 2 * a3_b3 * a0_b0 + b3_2 * a0_2) * z2 + (((-a0_2 - a3_2) * b[1] + a0_b0pa3_b3 * a[1]) * y2 + a0pa3 * a1_b1 + (-b[0] - b[3]) * a1_2 + (a3_a0_b3 - a3_2_b0) + a[3] * a0_b0 - b[3] * a0_2) * b[2] + ((a0_b0pa3_b3 * b[1] + (-b0_2 - b3_2) * a[1]) * y2 + (-a[0] - a[3]) * b1_2 + (b[0] + b[3]) * a1_b1 + (a3_b3_b0 - b3_2_a0) - a3_b0_2 + b[3] * a0_b0) * a[2];
-
-  out[3] = ((a[3] * a1_b1 - b[3] * a1_2 + a[3] * a0_b0 - b[3] * a0_2) * b[2] + (-a[3] * b1_2 + a1_b3 * b[1] - a3_b0_2 + b[3] * a0_b0) * a[2]) * z2 + (-a[3] * a[1] * y2 + a1_2 - a0_a3 + a0_2) * b2_2 + ((a[3] * b[1] + a1_b3) * y2 - 2 * a1_b1 + (a3_b0 + a0_b3) - 2 * a0_b0) * a2_b2 + (-b[3] * b[1] * y2 + b1_2 - b[3] * b[0] + b0_2) * a2_2 + ((a[3] * a0_b0 - b[3] * a0_2) * b[1] + (b[3] * a0_b0 - a3_b0_2) * a[1]) * y2 + (1 * a0_2 - a0_a3) * b1_2 + ((a3_b0 + a0_b3) - 2 * a0_b0) * a1_b1 + (1 * b0_2 - b[3] * b[0]) * a1_2;
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_color_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  size_t error;
-
-  int_fast16_t redError = (int_fast16_t)a[0] - (int_fast16_t)b[0];
-  redError *= redError;
-
-  if (redError < 0x4000 /* = 0x80 * 0x80 */)
-  {
-    const uint8_t factors[4] = { 2, 4, 3, 3 };
-
-    error = redError * factors[0];
-
-    for (size_t i = 1; i < channels; i++)
-    {
-      const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
-      error += (size_t)(e * e) * (size_t)factors[i];
-    }
-  }
-  else
-  {
-    const uint8_t factors[4] = { 3, 4, 2, 3 };
-
-    error = redError * factors[0];
-
-    for (size_t i = 1; i < channels; i++)
-    {
-      const int_fast16_t e = (int16_t)a[i] - (int16_t)b[i];
-      error += (size_t)(e * e) * (size_t)factors[i];
-    }
-  }
-
-  return error;
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_vector_error(const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  size_t error = 0;
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    const int_fast16_t e = (int_fast16_t)a[i] - (int_fast16_t)b[i];
-    error += (size_t)(e * e);
-  }
-
-  return error;
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_init_color_error_state_3d(const limg_encode_3d_output<channels> &in, limg_color_error_state_3d<channels> &state)
-{
-  for (size_t i = 0; i < channels; i++)
-  {
-    state.normalA[i] = (float)((int16_t)in.dirA_max[i] - (int16_t)in.dirA_min[i]);
-    state.normalB[i] = (float)((int16_t)in.dirB_mag[i] - (int16_t)in.dirB_offset[i]);
-    state.normalC[i] = (float)((int16_t)in.dirC_mag[i] - (int16_t)in.dirC_offset[i]);
-  }
-
-  state.inv_dot_normalA = 1.f / limg_dot<float, channels>(state.normalA, state.normalA);
-  state.inv_dot_normalB = 1.f / limg_dot<float, channels>(state.normalB, state.normalB);
-  state.inv_dot_normalC = 1.f / limg_dot<float, channels>(state.normalC, state.normalC);
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &color, const limg_encode_3d_output<channels> &in, limg_color_error_state_3d<channels> &state, float &fac_a, float &fac_b, float &fac_c)
-{
-  float minAtoCol[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    minAtoCol[i] = (float)(color[i] - in.dirA_min[i]);
-
-  const float facA = fac_a = limg_dot<float, channels>(minAtoCol, state.normalA) * state.inv_dot_normalA;
-
-  float colEst[channels];
-  float minBToColADiff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    colEst[i] = ((float)in.dirA_min[i] + facA * state.normalA[i]);
-    minBToColADiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirB_offset[i];
-  }
-
-  const float facB = fac_b = limg_dot<float, channels>(minBToColADiff, state.normalB) * state.inv_dot_normalB;
-
-  float minCToColBDiff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    colEst[i] = (colEst[i] + facB * state.normalB[i]);
-    minCToColBDiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirC_offset[i];
-  }
-
-  const float facC = fac_c = limg_dot<float, channels>(minCToColBDiff, state.normalC) * state.inv_dot_normalC;
-
-  (void)facC;
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_init_color_error_state_accurate_(const limg_ui8_4 &a, const limg_ui8_4 &b, limg_color_error_state<channels> &state)
-{
-  for (size_t i = 0; i < channels; i++)
-    state.normal[i] = (float)((int16_t)b[i] - (int16_t)a[i]);
-
-  state.inv_dot_normal = 1.f / limg_dot<float, channels>(state.normal, state.normal);
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_init_color_error_state_(const limg_ui8_4 &a, const limg_ui8_4 &b, limg_color_error_state<channels> &state)
-{
-  for (size_t i = 0; i < channels; i++)
-  {
-    const uint8_t diff = (b[i] - a[i]);
-    state.dist[i] = (float)diff;
-    state.inv_dist_or_one[i] = 1.f / (limgMax(1, state.dist[i]));
-
-    if (diff != 0)
-      state.inverse_dist_complete_or_one += (float)state.dist[i];
-  }
-
-  state.inverse_dist_complete_or_one = 1.f / limgMax(1.f, state.inverse_dist_complete_or_one);
-}
-
-template <size_t channels>
-LIMG_INLINE static void limg_init_color_error_state(const limg_ui8_4 &a, const limg_ui8_4 &b, limg_color_error_state<channels> &state)
-{
-  if constexpr (limg_RetrievePreciseDecomposition == 2)
-    limg_init_color_error_state_accurate_<channels>(a, b, state);
-  else
-    limg_init_color_error_state_<channels>(a, b, state);
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_color_error_state_get_error_(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  float offset[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    offset[i] = (float)(color[i] - a[i]);
-
-  float avg = 0;
-
-  for (size_t i = 0; i < channels; i++)
-    avg += offset[i];
-
-  avg *= state.inverse_dist_complete_or_one;
-
-  factor = avg;
-
-  size_t error = 0;
-  size_t lum = 0;
-
-  if constexpr (limg_ColorDependentBlockError)
-  {
-    if (color[0] < 0x80)
-    {
-      const uint8_t factors[4] = { 2, 4, 3, 3 };
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        const size_t e = (size_t)(0.5f + fabsf((offset[i] * state.inv_dist_or_one[i] - avg) * state.dist[i]));
-        error += e * e * factors[i];
-
-        if constexpr (limg_LuminanceDependentPixelError)
-          lum += color[i];
-      }
-    }
-    else
-    {
-      const uint8_t factors[4] = { 3, 4, 2, 3 };
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        const size_t e = (size_t)(0.5f + fabsf((offset[i] * state.inv_dist_or_one[i] - avg) * state.dist[i]));
-        error += e * e * factors[i];
-
-        if constexpr (limg_LuminanceDependentPixelError)
-          lum += color[i];
-      }
-    }
-  }
-  else
-  {
-    for (size_t i = 0; i < channels; i++)
-    {
-      const size_t e = (size_t)(0.5f + fabsf((offset[i] * state.inv_dist_or_one[i] - avg) * state.dist[i]));
-      error += e * e;
-
-      if constexpr (limg_LuminanceDependentPixelError)
-        lum += color[i];
-    }
-  }
-
-  if constexpr (limg_LuminanceDependentPixelError)
-  {
-    size_t ilum;
-    ilum = 0xFF * 12 - lum * (12 / channels);
-    ilum *= ilum;
-    lum = (ilum >> 20) + 8;
-    error = lum * error;
-  }
-
-  return error;
-}
-
-template <size_t channels>
-LIMG_INLINE static void limg_color_error_state_get_factor_(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  float offset[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    offset[i] = (float)(color[i] - a[i]);
-
-  float avg = 0;
-
-  for (size_t i = 0; i < channels; i++)
-    avg += offset[i];
-
-  factor = avg * state.inverse_dist_complete_or_one;
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_color_error_from_error_vec_(const limg_ui8_4 &color, const float error_vec[channels])
-{
-  size_t lum = 0;
-  float error = 0;
-
-  if constexpr (limg_ColorDependentBlockError)
-  {
-    if (color[0] < 0x80)
-    {
-      const float factors[4] = { 2, 4, 3, 3 };
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        error += error_vec[i] * error_vec[i] * factors[i];
-
-        if constexpr (limg_LuminanceDependentPixelError)
-          lum += color[i];
-      }
-    }
-    else
-    {
-      const float factors[4] = { 3, 4, 2, 3 };
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        error += error_vec[i] * error_vec[i] * factors[i];
-
-        if constexpr (limg_LuminanceDependentPixelError)
-          lum += color[i];
-      }
-    }
-  }
-  else
-  {
-    for (size_t i = 0; i < channels; i++)
-    {
-      error += error_vec[i] * error_vec[i];
-
-      if constexpr (limg_LuminanceDependentPixelError)
-        lum += color[i];
-    }
-  }
-
-  if constexpr (limg_LuminanceDependentPixelError)
-  {
-    size_t ilum;
-    ilum = 0xFF * 12 - lum * (12 / channels);
-    ilum *= ilum;
-    lum = (ilum >> 20) + 8;
-
-    return (size_t)(((float)lum * error) + 0.5f);
-  }
-  else
-  {
-    return (size_t)error;
-  }
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_color_error_state_get_error_accurate_(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  float lineOriginToPx[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    lineOriginToPx[i] = (float)color[i] - a[i];
-
-  const float f = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_dot_normal;
-  factor = f;
-
-  float on_line[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    on_line[i] = a[i] + f * state.normal[i];
-
-  float error_vec[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    error_vec[i] = (float)color[i] - on_line[i];
-
-  return limg_color_error_from_error_vec_<channels>(color, error_vec);
-}
-
-template <size_t channels>
-LIMG_INLINE static void limg_color_error_state_get_factor_accurate_(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  float lineOriginToPx[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    lineOriginToPx[i] = (float)color[i] - a[i];
-
-  factor = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_dot_normal;
-}
-
-template <size_t channels>
-LIMG_INLINE static size_t limg_color_error_state_get_error(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  if constexpr (limg_RetrievePreciseDecomposition == 2)
-    return limg_color_error_state_get_error_accurate_<channels>(color, a, state, factor);
-  else
-    return limg_color_error_state_get_error_<channels>(color, a, state, factor);
-}
-
-template <size_t channels>
-LIMG_INLINE static void limg_color_error_state_get_factor(const limg_ui8_4 &color, const limg_ui8_4 &a, const limg_color_error_state<channels> &state, float &factor)
-{
-  if constexpr (limg_RetrievePreciseDecomposition == 2)
-    limg_color_error_state_get_factor_accurate_<channels>(color, a, state, factor);
-  else
-    limg_color_error_state_get_factor_<channels>(color, a, state, factor);
-}
-
-template <size_t channels>
-static void limg_decode_block_from_factors(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  uint32_t diff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    diff[i] = b[i] - a[i];
-
-  constexpr uint32_t bias = 1 << 7;
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    limg_ui8_4 *pOutLine = reinterpret_cast<limg_ui8_4 *>(pOut + y * sizeX);
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const uint8_t fac = *pFactors;
-      pFactors++;
-
-      limg_ui8_4 px;
-
-      for (size_t i = 0; i < channels; i++)
-        px[i] = (uint8_t)(a[i] + (((fac << shift) * diff[i] + bias) >> 8));
-
-      *pOutLine = px;
-      pOutLine++;
-    }
-  }
-}
-
-#ifndef _MSC_VER
-__attribute__((target("sse4.1")))
-#endif
-static void limg_decode_block_from_factors_3d_3_sse41(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<3> &in, const uint8_t shift[3])
-{
-  constexpr size_t channels = 3;
-
-  int32_t normalA[channels];
-  int32_t normalB[channels];
-  int32_t normalC[channels];
-
-  int32_t minA[channels];
-  int32_t minB[channels];
-  int32_t minC[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    normalA[i] = in.dirA_max[i] - in.dirA_min[i];
-    normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
-    normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
-
-    minA[i] = in.dirA_min[i];
-    minB[i] = in.dirB_offset[i];
-    minC[i] = in.dirC_offset[i];
-  }
-
-  if (shift[0] > 7)
-    for (size_t i = 0; i < 3; i++)
-      normalA[i] = 0;
-
-  if (shift[1] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalB[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minB[i] = 0;
-  }
-
-  if (shift[2] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalC[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minC[i] = 0;
-  }
-
-  uint8_t decode_bias[3] = { 0, 0, 0 };
-
-  for (size_t i = 0; i < 3; i++)
-    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
-      decode_bias[i] |= j;
-
-  constexpr uint32_t bias = 1 << 7;
-
-  const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
-  const __m128i bias_ = _mm_set1_epi32(bias);
-  const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0xFFFF, minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value, ensure that alpha will be clamped to 0xFF.
-  const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0xFFFF, minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value, ensure that alpha will be clamped to 0xFF.
-  const __m128i minC_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(0xFFFF, minC[2], minC[1], minC[0]), 8), bias_); // reducing the addition of `bias` and `minC` into one value, ensure that alpha will be clamped to 0xFF.
-  const __m128i normalA_ = _mm_set_epi32(0, normalA[2], normalA[1], normalA[0]);
-  const __m128i normalB_ = _mm_set_epi32(0, normalB[2], normalB[1], normalB[0]);
-  const __m128i normalC_ = _mm_set_epi32(0, normalC[2], normalC[1], normalC[0]);
-  const __m128i hexFF_ = _mm_set1_epi32(0xFF);
-  const __m128i shuffle_pattern_ = _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 12, 8, 4, 0);
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    uint32_t *pOutLine = reinterpret_cast<uint32_t *>(pOut + y * sizeX);
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      const __m128i encoded_ = _mm_set_epi32(0, fC, fB, fA);
-      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
-      const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
-      const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
-
-      const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
-      const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
-      const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
-      const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
-
-      const __m128i packed_ = _mm_shuffle_epi8(dec_, shuffle_pattern_);
-
-      *pOutLine = _mm_extract_epi32(packed_, 0);
-      pOutLine++;
-    }
-  }
-}
-
-#ifndef _MSC_VER
-__attribute__((target("sse4.1")))
-#endif
-static void limg_decode_block_from_factors_3d_4_sse41(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<4> &in, const uint8_t shift[3])
-{
-  constexpr size_t channels = 4;
-
-  int32_t normalA[channels];
-  int32_t normalB[channels];
-  int32_t normalC[channels];
-
-  int32_t minA[channels];
-  int32_t minB[channels];
-  int32_t minC[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    normalA[i] = in.dirA_max[i] - in.dirA_min[i];
-    normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
-    normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
-
-    minA[i] = in.dirA_min[i];
-    minB[i] = in.dirB_offset[i];
-    minC[i] = in.dirC_offset[i];
-  }
-
-  if (shift[0] > 7)
-    for (size_t i = 0; i < 3; i++)
-      normalA[i] = 0;
-
-  if (shift[1] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalB[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minB[i] = 0;
-  }
-
-  if (shift[2] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalC[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minC[i] = 0;
-  }
-
-  uint8_t decode_bias[3] = { 0, 0, 0 };
-
-  for (size_t i = 0; i < 3; i++)
-    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
-      decode_bias[i] |= j;
-
-  constexpr uint32_t bias = 1 << 7;
-
-  const __m128i shift_mul_ = _mm_set_epi32(0, 1 << shift[2], 1 << shift[1], 1 << shift[0]);
-  const __m128i decode_bias_ = _mm_add_epi32(shift_mul_, _mm_set_epi32(0, decode_bias[2], decode_bias[1], decode_bias[0]));
-  const __m128i bias_ = _mm_set1_epi32(bias);
-  const __m128i minA_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minA[3], minA[2], minA[1], minA[0]), 8), bias_); // reducing the addition of `bias` and `minA` into one value.
-  const __m128i minB_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minB[3], minB[2], minB[1], minB[0]), 8), bias_); // reducing the addition of `bias` and `minB` into one value.
-  const __m128i minC_ = _mm_add_epi32(_mm_slli_epi32(_mm_set_epi32(minC[3], minC[2], minC[1], minC[0]), 8), bias_); // reducing the addition of `bias` and `minC` into one value.
-  const __m128i normalA_ = _mm_set_epi32(normalA[3], normalA[2], normalA[1], normalA[0]);
-  const __m128i normalB_ = _mm_set_epi32(normalB[3], normalB[2], normalB[1], normalB[0]);
-  const __m128i normalC_ = _mm_set_epi32(normalC[3], normalC[2], normalC[1], normalC[0]);
-  const __m128i hexFF_ = _mm_set1_epi32(0xFF);
-  const __m128i shuffle_pattern_ = _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 12, 8, 4, 0);
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    uint32_t *pOutLine = reinterpret_cast<uint32_t *>(pOut + y * sizeX);
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      const __m128i encoded_ = _mm_set_epi32(0, fC, fB, fA);
-      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
-      const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
-      const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
-
-      const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
-      const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
-      const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
-      const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
-
-      const __m128i packed_ = _mm_shuffle_epi8(dec_, shuffle_pattern_);
-
-      *pOutLine = _mm_extract_epi32(packed_, 0);
-      pOutLine++;
-    }
-  }
-}
-
-template <size_t channels>
-static void limg_decode_block_from_factors_3d_(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<channels> &in, const uint8_t shift[3])
-{
-  int32_t normalA[channels];
-  int32_t normalB[channels];
-  int32_t normalC[channels];
-
-  int32_t minA[channels];
-  int32_t minB[channels];
-  int32_t minC[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    normalA[i] = in.dirA_max[i] - in.dirA_min[i];
-    normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
-    normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
-
-    minA[i] = in.dirA_min[i];
-    minB[i] = in.dirB_offset[i];
-    minC[i] = in.dirC_offset[i];
-  }
-
-  if (shift[0] > 7)
-    for (size_t i = 0; i < 3; i++)
-      normalA[i] = 0;
-
-  if (shift[1] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalB[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minB[i] = 0;
-  }
-
-  if (shift[2] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalC[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minC[i] = 0;
-  }
-
-  uint8_t decode_bias[3] = { 0, 0, 0 };
-
-  for (size_t i = 0; i < 3; i++)
-    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
-      decode_bias[i] |= j;
-
-  constexpr uint32_t bias = 1 << 7;
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    limg_ui8_4 *pOutLine = reinterpret_cast<limg_ui8_4 *>(pOut + y * sizeX);
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      limg_ui8_4 px;
-
-      const int32_t fA_dec = (fA << shift[0]) + (fA * decode_bias[0]);
-      const int32_t fB_dec = (fB << shift[1]) + (fB * decode_bias[1]);
-      const int32_t fC_dec = (fC << shift[2]) + (fC * decode_bias[2]);
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        int32_t estCol;
-        estCol = (int32_t)(minA[i] + ((fA_dec * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(minB[i] + ((fB_dec * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(minC[i] + ((fC_dec * normalC[i] + (int32_t)bias) >> 8));
-
-        px[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
-      }
-
-      *pOutLine = px;
-      pOutLine++;
-    }
-  }
-}
-
-template <size_t channels>
-static void limg_decode_block_from_factors_3d(uint32_t *pOut, const size_t sizeX, const size_t rangeX, const size_t rangeY, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const limg_encode_3d_output<channels> &in, const uint8_t shift[3])
-{
-  if (sse41Supported)
-  {
-    if constexpr (channels == 4)
-      limg_decode_block_from_factors_3d_4_sse41(pOut, sizeX, rangeX, rangeY, pA, pB, pC, in, shift);
-    else
-      limg_decode_block_from_factors_3d_3_sse41(pOut, sizeX, rangeX, rangeY, pA, pB, pC, in, shift);
-  }
-  else
-  {
-    limg_decode_block_from_factors_3d_(pOut, sizeX, rangeX, rangeY, pA, pB, pC, in, shift);
-  }
-}
 
 template <size_t channels, bool CheckPixelAndBlockError>
 static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_state_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_ui8_4 &a, limg_ui8_4 &b, limg_encode_decomposition_state &state)
@@ -774,7 +42,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
         corrected[i] = (float)px[i] - avg[i];
 
         if (fabsf(corrected[i]) > max_abs)
-          max_abs = corrected[i];
+          max_abs = corrected[i]; // yes, not the absolute value. this is important!
       }
 
       if (max_abs != 0)
@@ -804,23 +72,17 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
   float_t min;
   float_t max;
 
-  bool all_zero = false;
+  bool any_nonzero = false;
 
   for (size_t i = 0; i < channels; i++)
-  {
-    if (diff_xi[i] != 0)
-    {
-      all_zero = false;
-      break;
-    }
-  }
+    any_nonzero |= (diff_xi[i] != 0);
 
   size_t blockError = 0;
 
-  if (!all_zero)
+  if (any_nonzero)
   {
     min = FLT_MAX;
-    max = FLT_MIN;
+    max = -FLT_MAX;
     const float inv_dot_diff_xi = 1.f / limg_dot<float, channels>(diff_xi, diff_xi);
 
     for (size_t y = 0; y < rangeY; y++)
@@ -901,14 +163,10 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
   }
 }
 
-static LIMG_INLINE int16_t limg_fast_round_int16(const float in)
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
-  return (int16_t)(in + 256.5f) - 256;
-}
+  constexpr size_t channels = 3;
 
-template <size_t channels>
-static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<channels> &out, limg_encode_decomposition_state &state, float *pScratch)
-{
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
   float avg[channels];
@@ -942,7 +200,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
         corrected[i] = (float)px[i] - avg[i];
 
         if (fabsf(corrected[i]) > max_abs)
-          max_abs = corrected[i];
+          max_abs = corrected[i]; // yes, not the absolute value. this is important!
       }
 
       if (max_abs != 0)
@@ -976,23 +234,17 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
   float_t min_dirC;
   float_t max_dirC;
 
-  bool all_zero = false;
+  bool any_nonzero = false;
 
   for (size_t i = 0; i < channels; i++)
-  {
-    if (diff_xi_dirA[i] != 0)
-    {
-      all_zero = false;
-      break;
-    }
-  }
+    any_nonzero |= (diff_xi_dirA[i] != 0);
 
   float *pEstimate = pScratch;
 
   float diff_xi_dirB[channels];
   float diff_xi_dirC[channels];
 
-  if (all_zero)
+  if (!any_nonzero)
   {
     min_dirA = 0;
     max_dirA = 0;
@@ -1004,7 +256,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
   else
   {
     min_dirA = FLT_MAX;
-    max_dirA = FLT_MIN;
+    max_dirA = -FLT_MAX;
 
     const float inv_dot_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
 
@@ -1039,7 +291,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
           error_vec_dirA[i] = (float)px[i] - pEstimate[i];
 
           if (fabsf(error_vec_dirA[i]) > max_abs)
-            max_abs = error_vec_dirA[i];
+            max_abs = error_vec_dirA[i]; // yes, not the absolute value. this is important!
         }
 
         pEstimate += channels;
@@ -1067,10 +319,7 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirB[i] *= inv_count;
 
-    if constexpr (channels == 3)
-      limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
-    else
-      limg_gram_schmidt_orthogonalization(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
+    limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
 
     pEstimate = pScratch;
 
@@ -1078,9 +327,9 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     const float inv_dot_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
 
     min_dirB = FLT_MAX;
-    max_dirB = FLT_MIN;
+    max_dirB = -FLT_MAX;
     min_dirC = FLT_MAX;
-    max_dirC = FLT_MIN;
+    max_dirC = -FLT_MAX;
 
     for (size_t y = 0; y < rangeY; y++)
     {
@@ -1129,6 +378,278 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
     out.dirC_offset[i] = (int16_t)limg_fast_round_int16(min_dirC * diff_xi_dirC[i]);
     out.dirC_mag[i] = (int16_t)limg_fast_round_int16(max_dirC * diff_xi_dirC[i]);
   }
+}
+
+// Since the cross product isn't defined in R4 and using three vectors we can't possibly represent all values in R4, so we'd rather get the closest possible direction we can get.
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
+{
+  constexpr size_t channels = 4;
+
+  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+
+  float avg[channels];
+
+  const float inv_count = 1.f / (float)(rangeX * rangeY);
+
+  for (size_t i = 0; i < channels; i++)
+    avg[i] = state.sum[i] * inv_count;
+
+  // Calculate average yi/xi, zi/xi (and potentially wi/xi).
+  // but rather than always choosing xi, we choose the largest of xi, yi, zi (,wi).
+  float diff_xi_dirA[channels];
+
+  for (size_t i = 0; i < channels; i++)
+    diff_xi_dirA[i] = 0;
+
+  for (size_t y = 0; y < rangeY; y++)
+  {
+    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+    for (size_t x = 0; x < rangeX; x++)
+    {
+      limg_ui8_4 px = *pLine;
+      pLine++;
+
+      float corrected[channels];
+      float max_abs = 0;
+
+      for (size_t i = 0; i < channels; i++)
+      {
+        corrected[i] = (float)px[i] - avg[i];
+
+        if (fabsf(corrected[i]) > max_abs)
+          max_abs = corrected[i]; // yes, not the absolute value. this is important!
+      }
+
+      if (max_abs != 0)
+      {
+        float vec[channels];
+        float lengthSquared = 0;
+
+        for (size_t i = 0; i < channels; i++)
+        {
+          vec[i] = corrected[i] / max_abs;
+          lengthSquared += vec[i] * vec[i];
+        }
+
+        //const float inv_length = 1.f / sqrtf(lengthSquared);
+        const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+
+        for (size_t i = 0; i < channels; i++)
+          diff_xi_dirA[i] += vec[i] * inv_length;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < channels; i++)
+    diff_xi_dirA[i] *= inv_count;
+
+  // Find Edge Points that result in mimimal error and contain the values.
+  float_t min_dirA;
+  float_t max_dirA;
+  float_t min_dirB;
+  float_t max_dirB;
+  float_t min_dirC;
+  float_t max_dirC;
+
+  bool any_nonzero = false;
+
+  for (size_t i = 0; i < channels; i++)
+    any_nonzero |= (diff_xi_dirA[i] != 0);
+
+  float *pEstimate = pScratch;
+
+  float diff_xi_dirB[channels];
+  float diff_xi_dirC[channels];
+
+  if (!any_nonzero)
+  {
+    min_dirA = 0;
+    max_dirA = 0;
+    min_dirB = 0;
+    max_dirB = 0;
+    min_dirC = 0;
+    max_dirC = 0;
+  }
+  else
+  {
+    min_dirA = FLT_MAX;
+    max_dirA = -FLT_MAX;
+
+    const float inv_dot_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
+
+    for (size_t i = 0; i < channels; i++)
+      diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
+
+    for (size_t y = 0; y < rangeY; y++)
+    {
+      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+      for (size_t x = 0; x < rangeX; x++)
+      {
+        limg_ui8_4 px = *pLine;
+        pLine++;
+
+        float lineOriginToPx[channels];
+
+        for (size_t i = 0; i < channels; i++)
+          lineOriginToPx[i] = (float)px[i] - avg[i];
+
+        const float f = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_dot_diff_xi_dirA;
+
+        min_dirA = limgMin(min_dirA, f);
+        max_dirA = limgMax(max_dirA, f);
+
+        float error_vec_dirA[channels];
+        float max_abs = 0;
+
+        for (size_t i = 0; i < channels; i++)
+        {
+          pEstimate[i] = avg[i] + f * diff_xi_dirA[i];
+          error_vec_dirA[i] = (float)px[i] - pEstimate[i];
+
+          if (fabsf(error_vec_dirA[i]) > max_abs)
+            max_abs = error_vec_dirA[i]; // yes, not the absolute value. this is important!
+        }
+
+        pEstimate += channels;
+
+        if (max_abs != 0)
+        {
+          float vec[channels];
+          float lengthSquared = 0;
+
+          for (size_t i = 0; i < channels; i++)
+          {
+            vec[i] = error_vec_dirA[i] / max_abs;
+            lengthSquared += vec[i] * vec[i];
+          }
+
+          //const float inv_length = 1.f / sqrtf(lengthSquared);
+          const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+
+          for (size_t i = 0; i < channels; i++)
+            diff_xi_dirB[i] += vec[i] * inv_length;
+        }
+      }
+    }
+
+    for (size_t i = 0; i < channels; i++)
+      diff_xi_dirB[i] *= inv_count;
+
+    const float inv_dot_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
+
+    min_dirB = FLT_MAX;
+    max_dirB = -FLT_MAX;
+
+    pEstimate = pScratch;
+
+    for (size_t y = 0; y < rangeY; y++)
+    {
+      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+      for (size_t x = 0; x < rangeX; x++)
+      {
+        limg_ui8_4 px = *pLine;
+        pLine++;
+
+        float lineOriginToPx[channels];
+
+        for (size_t i = 0; i < channels; i++)
+          lineOriginToPx[i] = px[i] - pEstimate[i];
+
+        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_dot_diff_xi_dirB;
+
+        min_dirB = limgMin(min_dirB, facB);
+        max_dirB = limgMax(max_dirB, facB);
+
+        float error_vec_dirAB[channels];
+        float max_abs = 0;
+
+        for (size_t i = 0; i < channels; i++)
+        {
+          pEstimate[i] = (pEstimate[i] + facB * diff_xi_dirB[i]);
+          error_vec_dirAB[i] = (float)px[i] - pEstimate[i];
+
+          if (fabsf(error_vec_dirAB[i]) > max_abs)
+            max_abs = error_vec_dirAB[i]; // yes, not the absolute value. this is important!
+        }
+
+        pEstimate += channels;
+
+        if (max_abs != 0)
+        {
+          float vec[channels];
+          float lengthSquared = 0;
+
+          for (size_t i = 0; i < channels; i++)
+          {
+            vec[i] = error_vec_dirAB[i] / max_abs;
+            lengthSquared += vec[i] * vec[i];
+          }
+
+          //const float inv_length = 1.f / sqrtf(lengthSquared);
+          const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+
+          for (size_t i = 0; i < channels; i++)
+            diff_xi_dirC[i] += vec[i] * inv_length;
+        }
+      }
+    }
+
+    for (size_t i = 0; i < channels; i++)
+      diff_xi_dirC[i] *= inv_count;
+
+    const float inv_dot_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
+
+    pEstimate = pScratch;
+
+    min_dirC = FLT_MAX;
+    max_dirC = -FLT_MAX;
+
+    for (size_t y = 0; y < rangeY; y++)
+    {
+      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+
+      for (size_t x = 0; x < rangeX; x++)
+      {
+        limg_ui8_4 px = *pLine;
+        pLine++;
+
+        float lineOriginToPx[channels];
+
+        for (size_t i = 0; i < channels; i++)
+          lineOriginToPx[i] = px[i] - pEstimate[i];
+
+        const float facC = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirC) * inv_dot_diff_xi_dirC;
+
+        min_dirC = limgMin(min_dirC, facC);
+        max_dirC = limgMax(max_dirC, facC);
+
+        pEstimate += channels;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    out.avg[i] = avg[i];
+    out.dirA_min[i] = (int16_t)limg_fast_round_int16(avg[i] + min_dirA * diff_xi_dirA[i]);
+    out.dirA_max[i] = (int16_t)limg_fast_round_int16(avg[i] + max_dirA * diff_xi_dirA[i]);
+    out.dirB_offset[i] = (int16_t)limg_fast_round_int16(min_dirB * diff_xi_dirB[i]);
+    out.dirB_mag[i] = (int16_t)limg_fast_round_int16(max_dirB * diff_xi_dirB[i]);
+    out.dirC_offset[i] = (int16_t)limg_fast_round_int16(min_dirC * diff_xi_dirC[i]);
+    out.dirC_mag[i] = (int16_t)limg_fast_round_int16(max_dirC * diff_xi_dirC[i]);
+  }
+}
+
+template <size_t channels>
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<channels> &out, limg_encode_decomposition_state &state, float *pScratch)
+{
+  if constexpr (channels == 3)
+    limg_encode_get_block_factors_accurate_from_state_3d_3(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+  else
+    limg_encode_get_block_factors_accurate_from_state_3d_4(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
 }
 
 template <bool WriteToFactors, bool WriteBlockError, bool CheckBounds, bool CheckPixelError, bool ReadWriteRangeSize, size_t channels>
@@ -2079,403 +1600,6 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
   return false;
 }
 
-template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const uint8_t shift, const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  uint32_t diff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    diff[i] = b[i] - a[i];
-
-  constexpr uint32_t bias = 1 << 7;
-
-  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
-  size_t blockError = 0;
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const limg_ui8_4 px = *pLine;
-      pLine++;
-
-      const uint8_t fac = (*pFactors) >> shift;
-      pFactors++;
-
-      limg_ui8_4 dec;
-
-      for (size_t i = 0; i < channels; i++)
-        dec[i] = (uint8_t)(a[i] + (((fac << shift) * diff[i] + bias) >> 8));
-
-      const size_t error = limg_color_error<channels>(dec, px);
-
-      if (error > pCtx->maxPixelBitCrushError)
-      {
-        if constexpr (limg_DiagnoseCulprits)
-        {
-          pCtx->culprits++;
-          pCtx->culpritWasPixelBitCrushError++;
-        }
-
-        return false;
-      }
-
-      blockError += error;
-    }
-  }
-
-  const bool ret = ((blockError * 0x10) / (rangeX * rangeY) < pCtx->maxBlockBitCrushError);
-
-  if constexpr (limg_DiagnoseCulprits)
-  {
-    if (!ret)
-    {
-      pCtx->culprits++;
-      pCtx->culpritWasBlockBitCrushError++;
-    }
-  }
-
-  return ret;
-}
-
-static LIMG_INLINE uint8_t limg_encode_find_shift_for_block(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const uint8_t *pFactors, const limg_ui8_4 &a, const limg_ui8_4 &b)
-{
-  uint8_t shift = 0;
-
-  if (pCtx->hasAlpha)
-  {
-    for (uint8_t i = 1; i < 8; i++)
-    {
-      if (!limg_encode_try_bit_crush_block<4>(pCtx, offsetX, offsetY, rangeX, rangeY, pFactors, i, a, b))
-        break;
-      else
-        shift = i;
-    }
-  }
-  else
-  {
-    for (uint8_t i = 1; i < 8; i++)
-    {
-      if (!limg_encode_try_bit_crush_block<3>(pCtx, offsetX, offsetY, rangeX, rangeY, pFactors, i, a, b))
-        break;
-      else
-        shift = i;
-    }
-  }
-
-  return shift;
-}
-
-template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
-{
-  int32_t normalA[channels];
-  int32_t normalB[channels];
-  int32_t normalC[channels];
-
-  int32_t minA[channels];
-  int32_t minB[channels];
-  int32_t minC[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    normalA[i] = in.dirA_max[i] - in.dirA_min[i];
-    normalB[i] = in.dirB_mag[i] - in.dirB_offset[i];
-    normalC[i] = in.dirC_mag[i] - in.dirC_offset[i];
-
-    minA[i] = in.dirA_min[i];
-    minB[i] = in.dirB_offset[i];
-    minC[i] = in.dirC_offset[i];
-  }
-
-  if (shift[0] > 7)
-    for (size_t i = 0; i < 3; i++)
-      normalA[i] = 0;
-
-  if (shift[1] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalB[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minB[i] = 0;
-  }
-
-  if (shift[2] > 7)
-  {
-    for (size_t i = 0; i < 3; i++)
-      normalC[i] = 0;
-
-    for (size_t i = 0; i < 3; i++)
-      minC[i] = 0;
-  }
-
-  uint8_t decode_bias[3] = { 0, 0, 0 };
-
-  for (size_t i = 0; i < 3; i++)
-    for (uint8_t j = (1 << (shift[i] - 1)) >> (7 - shift[i]); j; j >>= (8 - shift[i]))
-      decode_bias[i] |= j;
-
-  constexpr uint32_t bias = 1 << 7;
-  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-  size_t blockError = 0;
-
-  for (size_t y = 0; y < rangeY; y++)
-  {
-    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
-
-    for (size_t x = 0; x < rangeX; x++)
-    {
-      const limg_ui8_4 px = *pLine;
-      pLine++;
-
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      limg_ui8_4 dec;
-
-      const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
-      uint8_t decoded[3];
-
-      for (size_t i = 0; i < 3; i++)
-        decoded[i] = (encoded[i] << shift[i]) + (encoded[i] * decode_bias[i]);
-
-      for (size_t i = 0; i < channels; i++)
-      {
-        int32_t estCol;
-        estCol = (int32_t)(minA[i] + ((decoded[0] * normalA[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(minB[i] + ((decoded[1] * normalB[i] + (int32_t)bias) >> 8));
-        estCol += (int32_t)(minC[i] + ((decoded[2] * normalC[i] + (int32_t)bias) >> 8));
-
-        dec[i] = (uint8_t)limgClamp(estCol, 0, 0xFF);
-      }
-
-      const size_t error = limg_color_error<channels>(dec, px);
-
-      if (error > pCtx->maxPixelBitCrushError)
-      {
-        if constexpr (limg_DiagnoseCulprits)
-        {
-          pCtx->culprits++;
-          pCtx->culpritWasPixelBitCrushError++;
-        }
-
-        return false;
-      }
-
-      blockError += error;
-    }
-  }
-
-  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
-
-  if constexpr (limg_DiagnoseCulprits)
-  {
-    if (!ret)
-    {
-      pCtx->culprits++;
-      pCtx->culpritWasBlockBitCrushError++;
-    }
-  }
-
-  *pBlockError = blockError;
-
-  return ret;
-}
-
-template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
-{
-  if (sse41Supported)
-  {
-    if constexpr (channels == 4)
-      return limg_encode_try_bit_crush_block_3d_4_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, in, pA, pB, pC, shift, pBlockError);
-    else
-      return limg_encode_try_bit_crush_block_3d_3_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, in, pA, pB, pC, shift, pBlockError);
-  }
-  else
-  {
-    return limg_encode_try_bit_crush_block_3d_<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, in, pA, pB, pC, shift, pBlockError);
-  }
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
-{
-  size_t max_shift = 0;
-  size_t min_block_error = (size_t)-1;
-  uint8_t shift_try[3] = { 4, 5, 6 };
-  size_t blockError;
-
-  if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-  {
-    for (size_t i = 0; i < 3; i++)
-      shift[i] = shift_try[i];
-
-    max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
-    min_block_error = blockError;
-
-    shift_try[0] = 5;
-    shift_try[1] = 8;
-    shift_try[2] = 8;
-
-    if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-    {
-      for (size_t i = 0; i < 3; i++)
-        shift[i] = shift_try[i];
-
-      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
-      min_block_error = blockError;
-    }
-    else
-    {
-      shift_try[0] = 4;
-      shift_try[1] = 6;
-      shift_try[2] = 8;
-
-      if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-      {
-        for (size_t i = 0; i < 3; i++)
-          shift[i] = shift_try[i];
-
-        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
-        min_block_error = blockError;
-      }
-    }
-  }
-  else
-  {
-    shift_try[0] = 2;
-    shift_try[1] = 4;
-    shift_try[2] = 5;
-
-    if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-    {
-      for (size_t i = 0; i < 3; i++)
-        shift[i] = shift_try[i];
-
-      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
-      min_block_error = blockError;
-    }
-  }
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
-{
-  size_t max_shift = shift[0] + shift[1] + shift[2];
-  size_t min_block_error = (size_t)-1;
-  uint8_t shift_try[3];
-  size_t blockError;
-
-  // Only replace with *more* max shift.
-  {
-    uint8_t a = 0;
-    uint8_t b = 0;
-    uint8_t c = 1; // to get rid of the check for 0, 0, 0.
-
-    for (; a <= 8; a++)
-    {
-      shift_try[0] = a;
-
-      for (; b <= 8; b++)
-      {
-        shift_try[1] = b;
-
-        for (; c <= 8; c++)
-        {
-          if ((size_t)a + (size_t)b + (size_t)c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
-          {
-            shift_try[2] = c;
-
-            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-            {
-              for (size_t i = 0; i < 3; i++)
-                shift[i] = shift_try[i];
-
-              max_shift = (size_t)a + (size_t)b + (size_t)c;
-              min_block_error = blockError;
-            }
-            else
-            {
-              break;
-            }
-          }
-        }
-
-        if (c == 0)
-          break;
-
-        c = 0;
-      }
-
-      if (b == 0)
-        break;
-
-      b = 0;
-    }
-  }
-
-  // (Potentially) check other max shifts.
-  if (max_shift > 0 && !pCtx->fastBitCrush)
-  {
-    uint8_t a = shift[0];
-    uint8_t b = shift[1];
-    uint8_t c = shift[2] + 1;
-    
-    for (; a <= 8; a++)
-    {
-      shift_try[0] = a;
-
-      for (; b <= 8; b++)
-      {
-        shift_try[1] = b;
-
-        for (; c <= 8; c++)
-        {
-          if ((size_t)a + (size_t)b + (size_t)c == max_shift)
-          {
-            shift_try[2] = c;
-
-            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
-            {
-              if (min_block_error > blockError)
-              {
-                for (size_t i = 0; i < 3; i++)
-                  shift[i] = shift_try[i];
-
-                min_block_error = blockError;
-              }
-            }
-            else
-            {
-              break;
-            }
-          }
-        }
-
-        if (c == 0)
-          break;
-
-        c = 0;
-      }
-
-      if (b == 0)
-        break;
-
-      b = 0;
-    }
-  }
-}
-
 // returns new `ditherHash`.
 LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
 {
@@ -2720,7 +1844,7 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       limg_encode_sum_to_decomposition_state<channels>(pCtx, x, y, rx, ry, encode_state);
 
       limg_encode_3d_output<channels> decomposition;
-      limg_encode_get_block_factors_accurate_from_state_3d_<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, scratchBuffer);
+      limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, scratchBuffer);
 
       limg_color_error_state_3d<channels> color_error_state;
       limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
@@ -2769,13 +1893,13 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       {
         if (pCtx->ditheringEnabled)
         {
-          if (shift[0])
+          if (shift[0] && shift[0] != 8)
             ditherLast = limg_encode_dither(shift[0], rangeSize, ditherLast, pAu8);
 
-          if (shift[1])
+          if (shift[1] && shift[1] != 8)
             ditherLast = limg_encode_dither(shift[1], rangeSize, ditherLast, pBu8);
 
-          if (shift[2])
+          if (shift[2] && shift[2] != 8)
             ditherLast = limg_encode_dither(shift[2], rangeSize, ditherLast, pCu8);
         }
         else
