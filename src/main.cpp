@@ -316,21 +316,21 @@ int32_t main(const int32_t argc, const char **pArgv)
     // Write everything.
     if (_WriteEncodedImages)
     {
-      if (stbi_write_bmp("limg_out.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
+      if (stbi_write_tga("limg_out.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pTargetImage))
         puts("Wrote decoded file.");
       else
         puts("Failed to write decoded file.");
 
-      stbi_write_bmp("limg_fac_a.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
-      stbi_write_bmp("limg_fac_b.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
-      stbi_write_bmp("limg_fac_c.bmp", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
-      stbi_write_bmp("limg_bits.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
-      stbi_write_bmp("limg_col_a_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMin);
-      stbi_write_bmp("limg_col_a_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMax);
-      stbi_write_bmp("limg_col_b_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMin);
-      stbi_write_bmp("limg_col_b_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMax);
-      stbi_write_bmp("limg_col_c_min.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMin);
-      stbi_write_bmp("limg_col_c_max.bmp", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMax);
+      stbi_write_tga("limg_fac_a.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
+      stbi_write_tga("limg_fac_b.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
+      stbi_write_tga("limg_fac_c.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
+      stbi_write_tga("limg_bits.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
+      stbi_write_tga("limg_col_a_min.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMin);
+      stbi_write_tga("limg_col_a_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMax);
+      stbi_write_tga("limg_col_b_min.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMin);
+      stbi_write_tga("limg_col_b_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMax);
+      stbi_write_tga("limg_col_c_min.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMin);
+      stbi_write_tga("limg_col_c_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMax);
     }
 
     free(pSourceImage);

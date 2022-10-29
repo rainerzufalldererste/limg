@@ -36,17 +36,25 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
 
       float corrected[channels];
       float max_abs = 0;
+      size_t max_idx = 0;
 
       for (size_t i = 0; i < channels; i++)
       {
         corrected[i] = (float)px[i] - avg[i];
 
-        if (fabsf(corrected[i]) > max_abs)
-          max_abs = corrected[i]; // yes, not the absolute value. this is important!
+        const float abs_val = fabsf(corrected[i]);
+
+        if (abs_val > max_abs)
+        {
+          max_abs = abs_val;
+          max_idx = i;
+        }
       }
 
       if (max_abs != 0)
       {
+        max_abs = corrected[max_idx];
+
         float vec[channels];
         float lengthSquared = 0;
 
@@ -194,17 +202,25 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
       float corrected[channels];
       float max_abs = 0;
+      size_t max_idx = 0;
 
       for (size_t i = 0; i < channels; i++)
       {
         corrected[i] = (float)px[i] - avg[i];
 
-        if (fabsf(corrected[i]) > max_abs)
-          max_abs = corrected[i]; // yes, not the absolute value. this is important!
+        const float abs_val = fabsf(corrected[i]);
+
+        if (abs_val > max_abs)
+        {
+          max_abs = abs_val;
+          max_idx = i;
+        }
       }
 
       if (max_abs != 0)
       {
+        max_abs = corrected[max_idx];
+
         float vec[channels];
         float lengthSquared = 0;
 
@@ -284,20 +300,28 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
         float error_vec_dirA[channels];
         float max_abs = 0;
+        size_t max_idx = 0;
 
         for (size_t i = 0; i < channels; i++)
         {
           pEstimate[i] = avg[i] + f * diff_xi_dirA[i];
           error_vec_dirA[i] = (float)px[i] - pEstimate[i];
 
-          if (fabsf(error_vec_dirA[i]) > max_abs)
-            max_abs = error_vec_dirA[i]; // yes, not the absolute value. this is important!
+          const float abs_val = fabsf(error_vec_dirA[i]);
+
+          if (abs_val > max_abs)
+          {
+            max_abs = abs_val;
+            max_idx = i;
+          }
         }
 
         pEstimate += channels;
 
         if (max_abs != 0)
         {
+          max_abs = error_vec_dirA[max_idx];
+
           float vec[channels];
           float lengthSquared = 0;
 
@@ -412,17 +436,25 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
       float corrected[channels];
       float max_abs = 0;
+      size_t max_idx = 0;
 
       for (size_t i = 0; i < channels; i++)
       {
         corrected[i] = (float)px[i] - avg[i];
 
-        if (fabsf(corrected[i]) > max_abs)
-          max_abs = corrected[i]; // yes, not the absolute value. this is important!
+        const float abs_val = fabsf(corrected[i]);
+
+        if (abs_val > max_abs)
+        {
+          max_abs = abs_val;
+          max_idx = i;
+        }
       }
 
       if (max_abs != 0)
       {
+        max_abs = corrected[max_idx];
+
         float vec[channels];
         float lengthSquared = 0;
 
@@ -502,20 +534,28 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
         float error_vec_dirA[channels];
         float max_abs = 0;
+        size_t max_idx = 0;
 
         for (size_t i = 0; i < channels; i++)
         {
           pEstimate[i] = avg[i] + f * diff_xi_dirA[i];
           error_vec_dirA[i] = (float)px[i] - pEstimate[i];
 
-          if (fabsf(error_vec_dirA[i]) > max_abs)
-            max_abs = error_vec_dirA[i]; // yes, not the absolute value. this is important!
+          const float abs_val = fabsf(error_vec_dirA[i]);
+
+          if (abs_val > max_abs)
+          {
+            max_abs = abs_val;
+            max_idx = i;
+          }
         }
 
         pEstimate += channels;
 
         if (max_abs != 0)
         {
+          max_abs = error_vec_dirA[max_idx];
+
           float vec[channels];
           float lengthSquared = 0;
 
@@ -565,20 +605,28 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 
         float error_vec_dirAB[channels];
         float max_abs = 0;
+        size_t max_idx = 0;
 
         for (size_t i = 0; i < channels; i++)
         {
           pEstimate[i] = (pEstimate[i] + facB * diff_xi_dirB[i]);
           error_vec_dirAB[i] = (float)px[i] - pEstimate[i];
 
-          if (fabsf(error_vec_dirAB[i]) > max_abs)
-            max_abs = error_vec_dirAB[i]; // yes, not the absolute value. this is important!
+          const float abs_val = fabsf(error_vec_dirAB[i]);
+
+          if (abs_val > max_abs)
+          {
+            max_abs = abs_val;
+            max_idx = i;
+          }
         }
 
         pEstimate += channels;
 
         if (max_abs != 0)
         {
+          max_abs = error_vec_dirAB[max_idx];
+
           float vec[channels];
           float lengthSquared = 0;
 
@@ -2136,12 +2184,10 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
 
   if constexpr (limg_ColorDependentBlockError)
   {
-    //ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
-    //ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
-    ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 6 : 4);
-    ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 6 : 4);
-    ctx.maxPixelBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
-    ctx.maxBlockBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
+    ctx.maxPixelBlockError *= 4;
+    ctx.maxBlockPixelError *= 4;
+    ctx.maxPixelBitCrushError *= 7;
+    ctx.maxBlockBitCrushError *= 7;
   }
 
   if constexpr (limg_RetrievePreciseDecomposition == 2)
@@ -2227,12 +2273,10 @@ limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, con
 
   if constexpr (limg_ColorDependentBlockError)
   {
-    //ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
-    //ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 10 : 7); // technically correct but doesn't seem to produce similar results.
-    ctx.maxPixelBlockError *= (size_t)(ctx.hasAlpha ? 6 : 4);
-    ctx.maxBlockPixelError *= (size_t)(ctx.hasAlpha ? 6 : 4);
-    ctx.maxPixelBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
-    ctx.maxBlockBitCrushError *= (size_t)(ctx.hasAlpha ? 10 : 7);
+    ctx.maxPixelBlockError *= 4;
+    ctx.maxBlockPixelError *= 4;
+    ctx.maxPixelBitCrushError *= 7;
+    ctx.maxBlockBitCrushError *= 7;
   }
 
   if constexpr (limg_RetrievePreciseDecomposition == 2)

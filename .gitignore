@@ -272,5 +272,6 @@ Makefile
 builds/*
 * Advisor Result*/
 
-# Bitmaps
+# Output Images
 *.bmp
+*.tga
