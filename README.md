@@ -48,13 +48,3 @@ This is the difference to the original, boosted by a whole lot in order to make 
 For reference, this was the original image:
 
 ![limg - Original](https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/original.png)
-
-You can compare it to the compressed image here:
-
-<link rel="stylesheet" href="https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/style.css" />
-<div id="comparison">
-  <figure>
-    <div id="divisor"></div>
-  </figure>
-  <input type="range" min="0" max="100" value="50" id="slider" oninput="document.getElementById('divisor').style.width = document.getElementById('slider').value+'%';">
-</div>
