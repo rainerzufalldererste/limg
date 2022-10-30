@@ -1370,26 +1370,51 @@ static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode
   const __m128i shuffle_8lo_16 = _mm_set_epi8(-1, 7, -1, 3, -1, 6, -1, 2, -1, 5, -1, 1, -1, 4, -1, 0);
   const __m128i shuffle_8hi_16 = _mm_set_epi8(-1, 15, -1, 11, -1, 14, -1, 10, -1, 13, -1, 9, -1, 12, -1, 8);
 
-  const size_t rangeX_si128 = (size_t)limgMax(0LL, (int64_t)(rangeX - sizeof(__m128i) / sizeof(uint32_t)));
-
-  for (size_t oy = 0; oy < rangeY; oy++)
+  if (rangeX & 7)
   {
-    size_t ox = 0;
+    const size_t rangeX_si128 = (size_t)limgMax(0LL, (int64_t)(rangeX - sizeof(__m128i) / sizeof(uint32_t)));
 
-    for (; ox <= rangeX_si128; ox += sizeof(__m128i) / sizeof(uint32_t))
+    for (size_t oy = 0; oy < rangeY; oy++)
     {
-      const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]));
+      size_t ox = 0;
 
-      const __m128i sum16 = _mm_add_epi16(_mm_shuffle_epi8(val, shuffle_8lo_16), _mm_shuffle_epi8(val, shuffle_8hi_16));
-      const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
+      for (; ox <= rangeX_si128; ox += sizeof(__m128i) / sizeof(uint32_t))
+      {
+        const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]));
 
-      sum = _mm_add_epi32(sum, sum32);
+        const __m128i sum16 = _mm_add_epi16(_mm_shuffle_epi8(val, shuffle_8lo_16), _mm_shuffle_epi8(val, shuffle_8hi_16));
+        const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
+
+        sum = _mm_add_epi32(sum, sum32);
+      }
+
+      for (; ox < rangeX; ox++)
+        sum = _mm_add_epi32(sum, _mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]))));
+
+      pLine += pCtx->sizeX;
     }
+  }
+  else
+  {
+    for (size_t oy = 0; oy < rangeY; oy++)
+    {
+      size_t ox = 0;
 
-    for (; ox < rangeX; ox++)
-      sum = _mm_add_epi32(sum, _mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]))));
+      for (; ox <= rangeX; ox += sizeof(__m128i) / sizeof(uint32_t) * 3)
+      {
+        const __m128i val_0 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]));
+        const __m128i val_1 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox + 4]));
 
-    pLine += pCtx->sizeX;
+        const __m128i sum16_0 = _mm_add_epi16(_mm_shuffle_epi8(val_0, shuffle_8lo_16), _mm_shuffle_epi8(val_0, shuffle_8hi_16));
+        const __m128i sum16_1 = _mm_add_epi16(_mm_shuffle_epi8(val_1, shuffle_8lo_16), _mm_shuffle_epi8(val_1, shuffle_8hi_16));
+        const __m128i sum16 = _mm_add_epi16(sum16_0, sum16_1);
+        const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
+
+        sum = _mm_add_epi32(sum, sum32);
+      }
+
+      pLine += pCtx->sizeX;
+    }
   }
 
   _mm_storeu_si128(reinterpret_cast<__m128i *>(&state.sum[0]), _mm_cvtepu32_epi64(sum));
