@@ -1948,31 +1948,7 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       uint8_t *pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
       uint8_t *pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
 
-      for (size_t oy = 0; oy < ry; oy++)
-      {
-        const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + (oy + y) * pCtx->sizeX + x);
-
-        for (size_t ox = 0; ox < rx; ox++)
-        {
-          float a, b, c;
-
-          limg_color_error_state_3d_get_factors<channels>(*pLine, decomposition, color_error_state, a, b, c);
-
-          *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);
-          *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);
-          *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);
-
-          pAu8++;
-          pBu8++;
-          pCu8++;
-
-          pLine++;
-        }
-      }
-
-      pAu8 = scratch_u8;
-      pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+      limg_color_error_state_3d_get_all_factors(pCtx, decomposition, color_error_state, x, y, rx, ry, pAu8, pBu8, pCu8);
 
       uint8_t shift[3] = { 0, 0, 0 };
 
