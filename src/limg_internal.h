@@ -698,17 +698,17 @@ LIMG_INLINE static void limg_color_error_state_get_factor(const limg_ui8_4 &colo
     limg_color_error_state_get_factor_<channels>(color, a, state, factor);
 }
 
-static LIMG_INLINE int16_t limg_fast_round_int16(const float in)
+LIMG_INLINE int16_t limg_fast_round_int16(const float in)
 {
   return (int16_t)(in + 256.5f) - 256;
 }
 
-static LIMG_INLINE int16_t limg_fast_ceil_int16(const float in)
+LIMG_INLINE int16_t limg_fast_ceil_int16(const float in)
 {
   return (int16_t)(in + 256.99f) - 256;
 }
 
-static LIMG_INLINE int16_t limg_fast_floor_int16(const float in)
+LIMG_INLINE int16_t limg_fast_floor_int16(const float in)
 {
   return (int16_t)(in + 256.f) - 256;
 }

@@ -1361,11 +1361,14 @@ static LIMG_INLINE void limg_encode_sum_to_decomposition_state_(limg_encode_cont
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state)
+static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state) // this could be made SSSE3 compatible with very little effort.
 {
   __m128i sum = _mm_setzero_si128();
 
   const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetY * pCtx->sizeX + offsetX);
+
+  const __m128i shuffle_8lo_16 = _mm_set_epi8(-1, 7, -1, 3, -1, 6, -1, 2, -1, 5, -1, 1, -1, 4, -1, 0);
+  const __m128i shuffle_8hi_16 = _mm_set_epi8(-1, 15, -1, 11, -1, 14, -1, 10, -1, 13, -1, 9, -1, 12, -1, 8);
 
   const size_t rangeX_si128 = (size_t)limgMax(0LL, (int64_t)(rangeX - sizeof(__m128i) / sizeof(uint32_t)));
 
@@ -1377,10 +1380,10 @@ static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode
     {
       const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]));
 
-      const __m128i low = _mm_add_epi32(_mm_cvtepu8_epi32(_mm_bsrli_si128(val, 4)), _mm_cvtepu8_epi32(val));
-      const __m128i high = _mm_add_epi32(_mm_cvtepu8_epi32(_mm_bsrli_si128(val, 12)), _mm_cvtepu8_epi32(_mm_bsrli_si128(val, 8)));
+      const __m128i sum16 = _mm_add_epi16(_mm_shuffle_epi8(val, shuffle_8lo_16), _mm_shuffle_epi8(val, shuffle_8hi_16));
+      const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
 
-      sum = _mm_add_epi32(sum, _mm_add_epi32(low, high));
+      sum = _mm_add_epi32(sum, sum32);
     }
 
     for (; ox < rangeX; ox++)
