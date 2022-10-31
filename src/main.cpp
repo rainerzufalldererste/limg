@@ -251,6 +251,16 @@ int32_t main(const int32_t argc, const char **pArgv)
 
       const double megapixels = (sizeX * sizeY * 1e-6);
 
+      // Dry Run.
+      {
+        printf("\rDry Run...");
+
+        const limg_result result = limg_encode3d_test_perf(pSourceImage, sizeX, sizeY, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+
+        if (limg_success != result)
+          FAIL(EXIT_FAILURE, "Encode failed with exit code 0x%" PRIX32 ".\n", result);
+      }
+
       for (size_t i = 0; i < _ListCount; i++)
       {
         const int64_t before = CurrentTimeNs();      
