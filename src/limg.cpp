@@ -91,7 +91,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
   {
     min = FLT_MAX;
     max = -FLT_MAX;
-    const float inv_dot_diff_xi = 1.f / limg_dot<float, channels>(diff_xi, diff_xi);
+    const float inv_length_diff_xi = 1.f / limg_dot<float, channels>(diff_xi, diff_xi);
 
     for (size_t y = 0; y < rangeY; y++)
     {
@@ -107,7 +107,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = (float)px[i] - avg[i];
 
-        const float f = limg_dot<float, channels>(lineOriginToPx, diff_xi) * inv_dot_diff_xi;
+        const float f = limg_dot<float, channels>(lineOriginToPx, diff_xi) * inv_length_diff_xi;
 
         if constexpr (CheckPixelAndBlockError)
         {
@@ -252,7 +252,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   {
     // we originally set `min/max_dirA` to +/- FLT_MAX here, but that should be irrelevant, as we're counting from the average, so some should be below, some above or all zero.
 
-    const __m128 inv_dot_diff_xi_dirA = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirA_, diff_xi_dirA_, 0x7F)); // should be 0xFF with 4 channels.
+    const __m128 inv_length_diff_xi_dirA = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirA_, diff_xi_dirA_, 0x7F)); // should be 0xFF with 4 channels.
 
     {
       const uint32_t *pLine = pStart;
@@ -264,7 +264,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
           const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
           const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
 
-          const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0x7F), inv_dot_diff_xi_dirA); // should be 0xFF with 4 channels.
+          const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0x7F), inv_length_diff_xi_dirA); // should be 0xFF with 4 channels.
           const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
 
           min_dirA = _mm_min_ps(min_dirA, facA);
@@ -316,8 +316,8 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
     pEstimate = reinterpret_cast<__m128 *>(pScratch);
 
-    const __m128 inv_dot_diff_xi_dirB = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirB_, diff_xi_dirB_, 0x7F)); // should be 0xFF with 4 channels.
-    const __m128 inv_dot_diff_xi_dirC = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirC_, diff_xi_dirC_, 0x7F)); // should be 0xFF with 4 channels.
+    const __m128 inv_length_diff_xi_dirB = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirB_, diff_xi_dirB_, 0x7F)); // should be 0xFF with 4 channels.
+    const __m128 inv_length_diff_xi_dirC = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirC_, diff_xi_dirC_, 0x7F)); // should be 0xFF with 4 channels.
 
     min_dirC = min_dirB = _mm_set1_ps(FLT_MAX);
     max_dirC = max_dirB = _mm_set1_ps(-FLT_MAX);
@@ -336,7 +336,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
           const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
 
-          const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0x7F), inv_dot_diff_xi_dirB); // should be 0xFF with 4 channels.
+          const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0x7F), inv_length_diff_xi_dirB); // should be 0xFF with 4 channels.
           const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
 
           min_dirB = _mm_min_ps(min_dirB, facB);
@@ -345,7 +345,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
           const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
           const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
 
-          const __m128 facC = _mm_mul_ps(_mm_dp_ps(error_vec_dirAB, diff_xi_dirC_, 0x7F), inv_dot_diff_xi_dirC); // should be 0xFF with 4 channels.
+          const __m128 facC = _mm_mul_ps(_mm_dp_ps(error_vec_dirAB, diff_xi_dirC_, 0x7F), inv_length_diff_xi_dirC); // should be 0xFF with 4 channels.
 
           min_dirC = _mm_min_ps(min_dirC, facC);
           max_dirC = _mm_max_ps(max_dirC, facC);
@@ -488,7 +488,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
     min_dirA = FLT_MAX;
     max_dirA = -FLT_MAX;
 
-    const float inv_dot_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
+    const float inv_length_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
 
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
@@ -507,7 +507,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = (float)px[i] - avg[i];
 
-        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_dot_diff_xi_dirA;
+        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
 
         min_dirA = limgMin(min_dirA, facA);
         max_dirA = limgMax(max_dirA, facA);
@@ -556,8 +556,8 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
     pEstimate = pScratch;
 
-    const float inv_dot_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
-    const float inv_dot_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
+    const float inv_length_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
+    const float inv_length_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
 
     min_dirB = FLT_MAX;
     max_dirB = -FLT_MAX;
@@ -578,7 +578,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = px[i] - pEstimate[i];
 
-        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_dot_diff_xi_dirB;
+        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
 
         min_dirB = limgMin(min_dirB, facB);
         max_dirB = limgMax(max_dirB, facB);
@@ -591,7 +591,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
           error_vec_dirAB[i] = (float)px[i] - estimage;
         }
 
-        const float facC = limg_dot<float, channels>(error_vec_dirAB, diff_xi_dirC) * inv_dot_diff_xi_dirC;
+        const float facC = limg_dot<float, channels>(error_vec_dirAB, diff_xi_dirC) * inv_length_diff_xi_dirC;
 
         min_dirC = limgMin(min_dirC, facC);
         max_dirC = limgMax(max_dirC, facC);
@@ -712,7 +712,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     min_dirA = FLT_MAX;
     max_dirA = -FLT_MAX;
 
-    const float inv_dot_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
+    const float inv_length_diff_xi_dirA = 1.f / limg_dot<float, channels>(diff_xi_dirA, diff_xi_dirA);
 
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
@@ -731,7 +731,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = (float)px[i] - avg[i];
 
-        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_dot_diff_xi_dirA;
+        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
 
         min_dirA = limgMin(min_dirA, facA);
         max_dirA = limgMax(max_dirA, facA);
@@ -776,7 +776,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirB[i] *= inv_count;
 
-    const float inv_dot_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
+    const float inv_length_diff_xi_dirB = 1.f / limg_dot<float, channels>(diff_xi_dirB, diff_xi_dirB);
 
     min_dirB = FLT_MAX;
     max_dirB = -FLT_MAX;
@@ -797,7 +797,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = px[i] - pEstimate[i];
 
-        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_dot_diff_xi_dirB;
+        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
 
         min_dirB = limgMin(min_dirB, facB);
         max_dirB = limgMax(max_dirB, facB);
@@ -842,7 +842,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirC[i] *= inv_count;
 
-    const float inv_dot_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
+    const float inv_length_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
 
     pEstimate = pScratch;
 
@@ -863,7 +863,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
         for (size_t i = 0; i < channels; i++)
           lineOriginToPx[i] = px[i] - pEstimate[i];
 
-        const float facC = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirC) * inv_dot_diff_xi_dirC;
+        const float facC = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirC) * inv_length_diff_xi_dirC;
 
         min_dirC = limgMin(min_dirC, facC);
         max_dirC = limgMax(max_dirC, facC);

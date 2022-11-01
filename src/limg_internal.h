@@ -299,7 +299,7 @@ struct limg_color_error_state
 {
 #if LIMG_PRECISE_DECOMPOSITION == 2
   float normal[channels];
-  float inv_dot_normal;
+  float inv_length_normal;
 #else
   float dist[channels];
   float inv_dist_or_one[channels];
@@ -313,9 +313,9 @@ struct limg_color_error_state_3d
   float normalA[channels];
   float normalB[channels];
   float normalC[channels];
-  float inv_dot_normalA;
-  float inv_dot_normalB;
-  float inv_dot_normalC;
+  float inv_length_normalA;
+  float inv_length_normalB;
+  float inv_length_normalC;
 };
 
 template <size_t channels>
@@ -417,16 +417,16 @@ static LIMG_INLINE void limg_init_color_error_state_3d(const limg_encode_3d_outp
     nonzero[2] |= (state.normalC[i] != 0);
   }
 
-  memset(&state.inv_dot_normalA, 0, sizeof(float) * 3); // hah, always living on the edge.
+  memset(&state.inv_length_normalA, 0, sizeof(float) * 3); // hah, always living on the edge.
 
   if (nonzero[0])
-    state.inv_dot_normalA = 1.f / limg_dot<float, channels>(state.normalA, state.normalA);
+    state.inv_length_normalA = 1.f / limg_dot<float, channels>(state.normalA, state.normalA);
   
   if (nonzero[1])
-    state.inv_dot_normalB = 1.f / limg_dot<float, channels>(state.normalB, state.normalB);
+    state.inv_length_normalB = 1.f / limg_dot<float, channels>(state.normalB, state.normalB);
   
   if (nonzero[2])
-    state.inv_dot_normalC = 1.f / limg_dot<float, channels>(state.normalC, state.normalC);
+    state.inv_length_normalC = 1.f / limg_dot<float, channels>(state.normalC, state.normalC);
 }
 
 template <size_t channels>
@@ -437,7 +437,7 @@ static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &
   for (size_t i = 0; i < channels; i++)
     minAtoCol[i] = (float)(color[i] - in.dirA_min[i]);
 
-  const float facA = fac_a = limg_dot<float, channels>(minAtoCol, state.normalA) * state.inv_dot_normalA;
+  const float facA = fac_a = limg_dot<float, channels>(minAtoCol, state.normalA) * state.inv_length_normalA;
 
   float colEst[channels];
   float minBToColADiff[channels];
@@ -448,7 +448,7 @@ static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &
     minBToColADiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirB_offset[i];
   }
 
-  const float facB = fac_b = limg_dot<float, channels>(minBToColADiff, state.normalB) * state.inv_dot_normalB;
+  const float facB = fac_b = limg_dot<float, channels>(minBToColADiff, state.normalB) * state.inv_length_normalB;
 
   float minCToColBDiff[channels];
 
@@ -458,7 +458,7 @@ static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &
     minCToColBDiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirC_offset[i];
   }
 
-  const float facC = fac_c = limg_dot<float, channels>(minCToColBDiff, state.normalC) * state.inv_dot_normalC;
+  const float facC = fac_c = limg_dot<float, channels>(minCToColBDiff, state.normalC) * state.inv_length_normalC;
 
   (void)facC;
 }
@@ -502,9 +502,9 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_en
   const __m128 normalA_ = _mm_loadu_ps(color_error_state.normalA);
   const __m128 normalB_ = _mm_loadu_ps(color_error_state.normalB);
   const __m128 normalC_ = _mm_loadu_ps(color_error_state.normalC);
-  const __m128 inv_dot_normalA_ = _mm_set1_ps(color_error_state.inv_dot_normalA);
-  const __m128 inv_dot_normalB_ = _mm_set1_ps(color_error_state.inv_dot_normalB);
-  const __m128 inv_dot_normalC_ = _mm_set1_ps(color_error_state.inv_dot_normalC);
+  const __m128 inv_length_normalA_ = _mm_set1_ps(color_error_state.inv_length_normalA);
+  const __m128 inv_length_normalB_ = _mm_set1_ps(color_error_state.inv_length_normalB);
+  const __m128 inv_length_normalC_ = _mm_set1_ps(color_error_state.inv_length_normalC);
   const __m128i hexFF_ = _mm_set1_epi32(0xFF);
   const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
 
@@ -518,7 +518,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_en
       const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
 
       const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0x7F);
-      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_dot_normalA_);
+      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
 
       // I've tried a bunch of variations, but this one appears to be the fastest way of doing this that I could come up with.
       *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
@@ -528,7 +528,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_en
       const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
 
       const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0x7F);
-      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_dot_normalB_);
+      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
 
       *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
       pBu8++;
@@ -537,7 +537,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_en
       const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
 
       const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0x7F);
-      const __m128 facC = _mm_mul_ps(dotC, inv_dot_normalC_);
+      const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
 
       *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
       pCu8++;
@@ -560,9 +560,9 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_en
   const __m128 normalA_ = _mm_loadu_ps(color_error_state.normalA);
   const __m128 normalB_ = _mm_loadu_ps(color_error_state.normalB);
   const __m128 normalC_ = _mm_loadu_ps(color_error_state.normalC);
-  const __m128 inv_dot_normalA_ = _mm_set1_ps(color_error_state.inv_dot_normalA);
-  const __m128 inv_dot_normalB_ = _mm_set1_ps(color_error_state.inv_dot_normalB);
-  const __m128 inv_dot_normalC_ = _mm_set1_ps(color_error_state.inv_dot_normalC);
+  const __m128 inv_length_normalA_ = _mm_set1_ps(color_error_state.inv_length_normalA);
+  const __m128 inv_length_normalB_ = _mm_set1_ps(color_error_state.inv_length_normalB);
+  const __m128 inv_length_normalC_ = _mm_set1_ps(color_error_state.inv_length_normalC);
   const __m128i hexFF_ = _mm_set1_epi32(0xFF);
   const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
 
@@ -576,7 +576,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_en
       const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
 
       const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0xFF);
-      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_dot_normalA_);
+      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
 
       *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
       pAu8++;
@@ -585,7 +585,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_en
       const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
 
       const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0xFF);
-      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_dot_normalB_);
+      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
 
       *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
       pBu8++;
@@ -594,7 +594,7 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_en
       const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
 
       const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0xFF);
-      const __m128 facC = _mm_mul_ps(dotC, inv_dot_normalC_);
+      const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
 
       *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
       pCu8++;
@@ -626,7 +626,7 @@ static LIMG_INLINE void limg_init_color_error_state_accurate_(const limg_ui8_4 &
   for (size_t i = 0; i < channels; i++)
     state.normal[i] = (float)((int16_t)b[i] - (int16_t)a[i]);
 
-  state.inv_dot_normal = 1.f / limg_dot<float, channels>(state.normal, state.normal);
+  state.inv_length_normal = 1.f / limg_dot<float, channels>(state.normal, state.normal);
 }
 
 template <size_t channels>
@@ -810,7 +810,7 @@ LIMG_INLINE static size_t limg_color_error_state_get_error_accurate_(const limg_
   for (size_t i = 0; i < channels; i++)
     lineOriginToPx[i] = (float)color[i] - a[i];
 
-  const float f = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_dot_normal;
+  const float f = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_length_normal;
   factor = f;
 
   float on_line[channels];
@@ -834,7 +834,7 @@ LIMG_INLINE static void limg_color_error_state_get_factor_accurate_(const limg_u
   for (size_t i = 0; i < channels; i++)
     lineOriginToPx[i] = (float)color[i] - a[i];
 
-  factor = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_dot_normal;
+  factor = limg_dot<float, channels>(lineOriginToPx, state.normal) * state.inv_length_normal;
 }
 
 template <size_t channels>
