@@ -181,6 +181,8 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
 
   const __m128 sign_bit = _mm_castsi128_ps(_mm_set1_epi32(1 << 31));
+  const __m128 inv_sign_bit = _mm_castsi128_ps(_mm_set1_epi32(~(1 << 31)));
+  const __m128 zero_alpha = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
 
   const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
@@ -202,21 +204,24 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
       for (size_t x = 0; x < rangeX; x++)
       {
         const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-        const __m128 corrected = _mm_sub_ps(px, avg_);
+        const __m128 corrected = _mm_and_ps(zero_alpha, _mm_sub_ps(px, avg_));
 
-        if (0xFFFF != _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()))) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+
+        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
         {
           const __m128 _23 = _mm_shuffle_ps(corrected, corrected, _MM_SHUFFLE(0, 0, 3, 2));
           const __m128 half_min = _mm_min_ps(corrected, _23);
           const __m128 half_max = _mm_max_ps(corrected, _23);
-          const __m128 abs_min = _mm_or_ps(sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
           const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
           const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
           const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0x7F))); // should be 0xFF with 4 channels.
           const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
           
-          diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, _mm_mul_ps(corrected, invLength4));
+          const __m128 val = _mm_mul_ps(corrected, invLength4);
+          diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
         }
       }
 
@@ -261,17 +266,19 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
           max_dirA = _mm_max_ps(max_dirA, facA);
 
           const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
-          const __m128 error_vec_dirA = _mm_sub_ps(px, estimateA);
+          const __m128 error_vec_dirA = _mm_and_ps(zero_alpha, _mm_sub_ps(px, estimateA));
 
           _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
           pEstimate++;
 
-          if (0xFFFF != _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()))) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
+
+          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
           {
             const __m128 _23 = _mm_shuffle_ps(error_vec_dirA, error_vec_dirA, _MM_SHUFFLE(0, 0, 3, 2));
             const __m128 half_min = _mm_min_ps(error_vec_dirA, _23);
             const __m128 half_max = _mm_max_ps(error_vec_dirA, _23);
-            const __m128 abs_min = _mm_or_ps(sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
             const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
             const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
@@ -425,20 +432,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
       {
         max_abs = corrected[max_idx];
 
-        float vec[channels];
         float lengthSquared = 0;
 
         for (size_t i = 0; i < channels; i++)
-        {
-          vec[i] = corrected[i] / max_abs;
-          lengthSquared += vec[i] * vec[i];
-        }
+          lengthSquared += corrected[i] * corrected[i];
 
-        //const float inv_length = 1.f / sqrtf(lengthSquared);
-        const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
         for (size_t i = 0; i < channels; i++)
-          diff_xi_dirA[i] += vec[i] * inv_length;
+          diff_xi_dirA[i] += corrected[i] * inv_length;
       }
     }
   }
@@ -526,20 +528,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
         {
           max_abs = error_vec_dirA[max_idx];
 
-          float vec[channels];
           float lengthSquared = 0;
 
           for (size_t i = 0; i < channels; i++)
-          {
-            vec[i] = error_vec_dirA[i] / max_abs;
-            lengthSquared += vec[i] * vec[i];
-          }
+            lengthSquared += error_vec_dirA[i] * error_vec_dirA[i];
 
-          //const float inv_length = 1.f / sqrtf(lengthSquared);
-          const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
           for (size_t i = 0; i < channels; i++)
-            diff_xi_dirB[i] += vec[i] * inv_length;
+            diff_xi_dirB[i] += error_vec_dirA[i] * inv_length;
         }
       }
     }
@@ -659,20 +656,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
       {
         max_abs = corrected[max_idx];
 
-        float vec[channels];
         float lengthSquared = 0;
 
         for (size_t i = 0; i < channels; i++)
-        {
-          vec[i] = corrected[i] / max_abs;
-          lengthSquared += vec[i] * vec[i];
-        }
+          lengthSquared += corrected[i] * corrected[i];
 
-        //const float inv_length = 1.f / sqrtf(lengthSquared);
-        const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
         for (size_t i = 0; i < channels; i++)
-          diff_xi_dirA[i] += vec[i] * inv_length;
+          diff_xi_dirA[i] += corrected[i] * inv_length;
       }
     }
   }
@@ -760,20 +752,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
         {
           max_abs = error_vec_dirA[max_idx];
 
-          float vec[channels];
           float lengthSquared = 0;
 
           for (size_t i = 0; i < channels; i++)
-          {
-            vec[i] = error_vec_dirA[i] / max_abs;
-            lengthSquared += vec[i] * vec[i];
-          }
+            lengthSquared += error_vec_dirA[i] * error_vec_dirA[i];
 
-          //const float inv_length = 1.f / sqrtf(lengthSquared);
-          const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
           for (size_t i = 0; i < channels; i++)
-            diff_xi_dirB[i] += vec[i] * inv_length;
+            diff_xi_dirB[i] += error_vec_dirA[i] * inv_length;
         }
       }
     }
@@ -831,20 +818,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
         {
           max_abs = error_vec_dirAB[max_idx];
 
-          float vec[channels];
           float lengthSquared = 0;
 
           for (size_t i = 0; i < channels; i++)
-          {
-            vec[i] = error_vec_dirAB[i] / max_abs;
-            lengthSquared += vec[i] * vec[i];
-          }
+            lengthSquared += error_vec_dirAB[i] * error_vec_dirAB[i];
 
-          //const float inv_length = 1.f / sqrtf(lengthSquared);
-          const float inv_length = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared)));
+          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
           for (size_t i = 0; i < channels; i++)
-            diff_xi_dirC[i] += vec[i] * inv_length;
+            diff_xi_dirC[i] += error_vec_dirAB[i] * inv_length;
         }
       }
     }
