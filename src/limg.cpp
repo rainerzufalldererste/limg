@@ -183,6 +183,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   const __m128 sign_bit = _mm_castsi128_ps(_mm_set1_epi32(1 << 31));
   const __m128 inv_sign_bit = _mm_castsi128_ps(_mm_set1_epi32(~(1 << 31)));
   const __m128 zero_alpha = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
+  const __m128 preferenceBias = _mm_set_ps(0, FLT_EPSILON * 1, FLT_EPSILON * 2, FLT_EPSILON * 3);
 
   const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
 
@@ -210,9 +211,12 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
         if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
         {
-          const __m128 _23 = _mm_shuffle_ps(corrected, corrected, _MM_SHUFFLE(0, 0, 3, 2));
-          const __m128 half_min = _mm_min_ps(corrected, _23);
-          const __m128 half_max = _mm_max_ps(corrected, _23);
+          const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
+          const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
+          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 half_min = _mm_min_ps(minBiased, min_23);
+          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
           const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
           const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
           const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
@@ -222,6 +226,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
           
           const __m128 val = _mm_mul_ps(corrected, invLength4);
           diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
+
         }
       }
 
@@ -243,7 +248,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   __m128 diff_xi_dirB_ = _mm_setzero_ps();
   __m128 diff_xi_dirC_ = _mm_setzero_ps();
 
-  if (0xFFFF != _mm_movemask_ps(_mm_cmpeq_ps(diff_xi_dirA_, _mm_setzero_ps()))) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+  if (0b1111 != _mm_movemask_ps(_mm_cmpeq_ps(diff_xi_dirA_, _mm_setzero_ps()))) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
   {
     // we originally set `min/max_dirA` to +/- FLT_MAX here, but that should be irrelevant, as we're counting from the average, so some should be below, some above or all zero.
 
@@ -275,9 +280,12 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
           if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
           {
-            const __m128 _23 = _mm_shuffle_ps(error_vec_dirA, error_vec_dirA, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 half_min = _mm_min_ps(error_vec_dirA, _23);
-            const __m128 half_max = _mm_max_ps(error_vec_dirA, _23);
+            const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
+            const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
+            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 half_min = _mm_min_ps(minBiased, min_23);
+            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
             const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
             const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
             const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
@@ -882,9 +890,9 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
 {
   if constexpr (channels == 3)
   {
-    //if (sse41Supported)
-    //  limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
-    //else
+    if (sse41Supported)
+      limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+    else
       limg_encode_get_block_factors_accurate_from_state_3d_3(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
   }
   else
