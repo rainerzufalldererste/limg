@@ -390,6 +390,243 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   out.dirC_mag[2] = (int16_t)_mm_extract_epi32(dirCmax, 2);
 }
 
+LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
+{
+  constexpr size_t channels = 4;
+
+  _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
+
+  const __m128 sign_bit = _mm_castsi128_ps(_mm_set1_epi32(1 << 31));
+  const __m128 inv_sign_bit = _mm_castsi128_ps(_mm_set1_epi32(~(1 << 31)));
+  const __m128 preferenceBias = _mm_set_ps(0, FLT_EPSILON * 1, FLT_EPSILON * 2, FLT_EPSILON * 3);
+
+  const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+
+  uint32_t avg[channels];
+
+  for (size_t i = 0; i < channels; i++)
+    avg[i] = (uint32_t)state.sum[i];
+
+  const __m128 inv_count_ = _mm_set1_ps(1.f / (float)(rangeX * rangeY));
+  const __m128 avg_ = _mm_mul_ps(_mm_cvtepi32_ps(_mm_loadu_si128(reinterpret_cast<const __m128i *>(avg))), inv_count_);
+
+  __m128 diff_xi_dirA_ = _mm_setzero_ps();
+
+  {
+    const uint32_t *pLine = pStart;
+
+    for (size_t y = 0; y < rangeY; y++)
+    {
+      for (size_t x = 0; x < rangeX; x++)
+      {
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
+        const __m128 corrected = _mm_sub_ps(px, avg_);
+
+        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+
+        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+        {
+          const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
+          const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
+          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 half_min = _mm_min_ps(minBiased, min_23);
+          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
+
+          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0xFF)));
+          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
+
+          const __m128 val = _mm_mul_ps(corrected, invLength4);
+          diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
+
+        }
+      }
+
+      pLine += pCtx->sizeX;
+    }
+
+    diff_xi_dirA_ = _mm_mul_ps(diff_xi_dirA_, inv_count_);
+  }
+
+  __m128 min_dirA = _mm_setzero_ps();
+  __m128 max_dirA = _mm_setzero_ps();
+  __m128 min_dirB = _mm_setzero_ps();
+  __m128 max_dirB = _mm_setzero_ps();
+  __m128 min_dirC = _mm_setzero_ps();
+  __m128 max_dirC = _mm_setzero_ps();
+
+  __m128 *pEstimate = reinterpret_cast<__m128 *>(pScratch);
+
+  __m128 diff_xi_dirB_ = _mm_setzero_ps();
+  __m128 diff_xi_dirC_ = _mm_setzero_ps();
+
+  if (0b1111 != _mm_movemask_ps(_mm_cmpeq_ps(diff_xi_dirA_, _mm_setzero_ps()))) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+  {
+    // we originally set `min/max_dirA` to +/- FLT_MAX here, but that should be irrelevant, as we're counting from the average, so some should be below, some above or all zero.
+
+    const __m128 inv_length_diff_xi_dirA = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirA_, diff_xi_dirA_, 0xFF));
+
+    {
+      const uint32_t *pLine = pStart;
+
+      for (size_t y = 0; y < rangeY; y++)
+      {
+        for (size_t x = 0; x < rangeX; x++)
+        {
+          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
+          const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
+
+          const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0xFF), inv_length_diff_xi_dirA);
+          const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
+
+          min_dirA = _mm_min_ps(min_dirA, facA);
+          max_dirA = _mm_max_ps(max_dirA, facA);
+
+          const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
+          const __m128 error_vec_dirA = _mm_sub_ps(px, estimateA);
+
+          _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
+          pEstimate++;
+
+          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
+
+          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+          {
+            const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
+            const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
+            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 half_min = _mm_min_ps(minBiased, min_23);
+            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+            const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+            const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
+
+            const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirA, error_vec_dirA, 0xFF)));
+            const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
+
+            diff_xi_dirB_ = _mm_add_ps(diff_xi_dirB_, _mm_mul_ps(error_vec_dirA, invLength4));
+          }
+        }
+
+        pLine += pCtx->sizeX;
+      }
+
+      diff_xi_dirB_ = _mm_mul_ps(diff_xi_dirB_, inv_count_);
+    }
+
+    pEstimate = reinterpret_cast<__m128 *>(pScratch);
+
+    const __m128 inv_length_diff_xi_dirB = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirB_, diff_xi_dirB_, 0xFF));
+
+    min_dirC = min_dirB = _mm_set1_ps(FLT_MAX);
+    max_dirC = max_dirB = _mm_set1_ps(-FLT_MAX);
+
+    {
+      const uint32_t *pLine = pStart;
+
+      for (size_t y = 0; y < rangeY; y++)
+      {
+        for (size_t x = 0; x < rangeX; x++)
+        {
+          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
+          const __m128 estimateA = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
+          const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
+
+          const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0xFF), inv_length_diff_xi_dirB);
+          const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
+
+          min_dirB = _mm_min_ps(min_dirB, facB);
+          max_dirB = _mm_max_ps(max_dirB, facB);
+
+          const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
+          const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
+
+          _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateB);
+          pEstimate++;
+
+          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirAB, _mm_setzero_ps()));
+
+          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
+          {
+            const __m128 minBiased = _mm_sub_ps(error_vec_dirAB, preferenceBias);
+            const __m128 maxBiased = _mm_add_ps(error_vec_dirAB, preferenceBias);
+            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+            const __m128 half_min = _mm_min_ps(minBiased, min_23);
+            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+            const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+            const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
+
+            const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirAB, error_vec_dirAB, 0xFF)));
+            const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
+
+            diff_xi_dirC_ = _mm_add_ps(diff_xi_dirC_, _mm_mul_ps(error_vec_dirAB, invLength4));
+          }
+        }
+
+        pLine += pCtx->sizeX;
+      }
+
+      diff_xi_dirC_ = _mm_mul_ps(diff_xi_dirC_, inv_count_);
+    }
+
+    const __m128 inv_length_diff_xi_dirC = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirC_, diff_xi_dirC_, 0xFF));
+
+    pEstimate = reinterpret_cast<__m128 *>(pScratch);
+
+    {
+      const uint32_t *pLine = pStart;
+
+      for (size_t y = 0; y < rangeY; y++)
+      {
+        for (size_t x = 0; x < rangeX; x++)
+        {
+          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
+          const __m128 estimateAB = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
+          const __m128 lineOriginToPx = _mm_sub_ps(px, estimateAB);
+
+          const __m128 facC = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirC_, 0xFF), inv_length_diff_xi_dirC);
+
+          min_dirC = _mm_min_ps(min_dirC, facC);
+          max_dirC = _mm_max_ps(max_dirC, facC);
+        }
+
+        pLine += pCtx->sizeX;
+      }
+    }
+  }
+
+  const __m128i _32_to_16 = _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, 13, 12, 9, 8, 5, 4, 1, 0);
+
+  __m128i dirAmin = _mm_cvtps_epi32(_mm_add_ps(avg_, _mm_mul_ps(_mm_shuffle_ps(min_dirA, min_dirA, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirA_)));
+  __m128i dirAmax = _mm_cvtps_epi32(_mm_add_ps(avg_, _mm_mul_ps(_mm_shuffle_ps(max_dirA, max_dirA, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirA_)));
+  __m128i dirBmin = _mm_cvtps_epi32(_mm_mul_ps(_mm_shuffle_ps(min_dirB, min_dirB, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirB_));
+  __m128i dirBmax = _mm_cvtps_epi32(_mm_mul_ps(_mm_shuffle_ps(max_dirB, max_dirB, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirB_));
+  __m128i dirCmin = _mm_cvtps_epi32(_mm_mul_ps(_mm_shuffle_ps(min_dirC, min_dirC, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirC_));
+  __m128i dirCmax = _mm_cvtps_epi32(_mm_mul_ps(_mm_shuffle_ps(max_dirC, max_dirC, _MM_SHUFFLE(0, 0, 0, 0)), diff_xi_dirC_));
+
+  dirAmin = _mm_shuffle_epi8(dirAmin, _32_to_16);
+  dirAmax = _mm_shuffle_epi8(dirAmax, _32_to_16);
+  dirBmin = _mm_shuffle_epi8(dirBmin, _32_to_16);
+  dirBmax = _mm_shuffle_epi8(dirBmax, _32_to_16);
+  dirCmin = _mm_shuffle_epi8(dirCmin, _32_to_16);
+  dirCmax = _mm_shuffle_epi8(dirCmax, _32_to_16);
+  
+  _mm_storeu_ps(out.avg, avg_);
+
+  *reinterpret_cast<uint64_t *>(out.dirA_min) = _mm_extract_epi64(dirAmin, 0);
+  *reinterpret_cast<uint64_t *>(out.dirA_max) = _mm_extract_epi64(dirAmax, 0);
+  *reinterpret_cast<uint64_t *>(out.dirB_offset) = _mm_extract_epi64(dirBmin, 0);
+  *reinterpret_cast<uint64_t *>(out.dirB_mag) = _mm_extract_epi64(dirBmax, 0);
+  *reinterpret_cast<uint64_t *>(out.dirC_offset) = _mm_extract_epi64(dirCmin, 0);
+  *reinterpret_cast<uint64_t *>(out.dirC_mag) = _mm_extract_epi64(dirCmax, 0);
+}
+
 LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   constexpr size_t channels = 3;
@@ -897,7 +1134,10 @@ static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_sta
   }
   else
   {
-    limg_encode_get_block_factors_accurate_from_state_3d_4(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+    if (sse41Supported)
+      limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+    else
+      limg_encode_get_block_factors_accurate_from_state_3d_4(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
   }
 }
 
@@ -2152,45 +2392,58 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       limg_color_error_state_3d_get_all_factors(pCtx, decomposition, color_error_state, x, y, rx, ry, pAu8, pBu8, pCu8);
 
       uint8_t shift[3] = { 0, 0, 0 };
-
-      // Try best guesses.
-      if (pCtx->guessCrush)
-        limg_encode_guess_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
-      
-      limg_encode_find_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
-
       const size_t rangeSize = rx * ry;
 
-      if (shift[0] || shift[1] || shift[2])
+      if (pCtx->crushBits)
       {
-        if (pCtx->ditheringEnabled)
+        // Try best guesses.
+        if (pCtx->guessCrush)
+          limg_encode_guess_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
+
+        limg_encode_find_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
+
+        if (shift[0] || shift[1] || shift[2])
         {
-          if (shift[0] && shift[0] != 8)
-            ditherLast = limg_encode_dither(shift[0], rangeSize, ditherLast, pAu8);
+          if (pCtx->ditheringEnabled)
+          {
+            if (shift[0] && shift[0] != 8)
+              ditherLast = limg_encode_dither(shift[0], rangeSize, ditherLast, pAu8);
 
-          if (shift[1] && shift[1] != 8)
-            ditherLast = limg_encode_dither(shift[1], rangeSize, ditherLast, pBu8);
+            if (shift[1] && shift[1] != 8)
+              ditherLast = limg_encode_dither(shift[1], rangeSize, ditherLast, pBu8);
 
-          if (shift[2] && shift[2] != 8)
-            ditherLast = limg_encode_dither(shift[2], rangeSize, ditherLast, pCu8);
+            if (shift[2] && shift[2] != 8)
+              ditherLast = limg_encode_dither(shift[2], rangeSize, ditherLast, pCu8);
+          }
+          else
+          {
+            // it's probably faster to not `if` the shift values individually.
+            for (size_t i = 0; i < rangeSize; i++)
+            {
+              pAu8[i] >>= shift[0];
+              pBu8[i] >>= shift[1];
+              pCu8[i] >>= shift[2];
+            }
+          }
+
+          if constexpr (store_accum_bits)
+          {
+            for (size_t i = 0; i < 3; i++)
+            {
+              accum_bits[i] += (8 - shift[i]) * rangeSize;
+              accum_bits[3 + i * 9 + shift[i]] += rangeSize;
+            }
+          }
         }
         else
         {
-          // it's probably faster to not `if` the shift values individually.
-          for (size_t i = 0; i < rangeSize; i++)
+          if constexpr (store_accum_bits)
           {
-            pAu8[i] >>= shift[0];
-            pBu8[i] >>= shift[1];
-            pCu8[i] >>= shift[2];
-          }
-        }
-
-        if constexpr (store_accum_bits)
-        {
-          for (size_t i = 0; i < 3; i++)
-          {
-            accum_bits[i] += (8 - shift[i]) * rangeSize;
-            accum_bits[3 + i * 9 + shift[i]] += rangeSize;
+            for (size_t i = 0; i < 3; i++)
+            {
+              accum_bits[i] += 8 * rangeSize;
+              accum_bits[3 + i * 9] += rangeSize;
+            }
           }
         }
       }
@@ -2397,6 +2650,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   ctx.ditheringEnabled = true;
   ctx.fastBitCrush = fastBitCrushing;
   ctx.guessCrush = true;
+  ctx.crushBits = errorFactor != 0;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {
@@ -2486,6 +2740,7 @@ limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, con
   ctx.ditheringEnabled = true;
   ctx.fastBitCrush = fastBitCrushing;
   ctx.guessCrush = true;
+  ctx.crushBits = errorFactor != 0;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {
