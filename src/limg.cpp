@@ -447,70 +447,62 @@ static LIMG_INLINE bool limg_encode_attempt_include_unused_pixels(limg_encode_co
 }
 
 template <size_t channels>
-static LIMG_INLINE void limg_encode_sum_to_decomposition_state_(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state)
+static LIMG_INLINE void limg_encode_sum_to_decomposition_state_(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_decomposition_state &state)
 {
   for (size_t i = 0; i < channels; i++)
     state.sum[i] = 0;
 
-  for (size_t oy = 0; oy < rangeY; oy++)
+  const limg_ui8_4 *pPx = reinterpret_cast<const limg_ui8_4 *>(pPixels);
+
+  for (size_t i = 0; i < size; i++)
   {
-    const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + (offsetY + oy) * pCtx->sizeX + offsetX);
+    for (size_t j = 0; j < channels; j++)
+      state.sum[j] += (*pPx)[j];
 
-    for (size_t ox = 0; ox < rangeX; ox++)
-    {
-      for (size_t i = 0; i < channels; i++)
-        state.sum[i] += (*pLine)[i];
-
-      pLine++;
-    }
+    pPx++;
   }
 }
 
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state) // this could be made SSSE3 compatible with very little effort.
+static LIMG_INLINE void limg_encode_sum_to_decomposition_state_sse41(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_decomposition_state &state) // this could be made SSSE3 compatible with very little effort.
 {
   __m128i sum = _mm_setzero_si128();
 
-  const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetY * pCtx->sizeX + offsetX);
+  const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pPixels);
 
   const __m128i shuffle_8lo_16 = _mm_set_epi8(-1, 7, -1, 3, -1, 6, -1, 2, -1, 5, -1, 1, -1, 4, -1, 0);
   const __m128i shuffle_8hi_16 = _mm_set_epi8(-1, 15, -1, 11, -1, 14, -1, 10, -1, 13, -1, 9, -1, 12, -1, 8);
 
-  const size_t rangeX_si128 = (size_t)limgMax(0LL, (int64_t)(rangeX - sizeof(__m128i) / sizeof(uint32_t)));
+  const size_t size_si128 = (size_t)limgMax(0LL, (int64_t)(size - sizeof(__m128i) / sizeof(uint32_t)));
 
-  for (size_t oy = 0; oy < rangeY; oy++)
+  size_t i = 0;
+
+  for (; i <= size_si128; i += sizeof(__m128i) / sizeof(uint32_t))
   {
-    size_t ox = 0;
+    const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[i]));
 
-    for (; ox <= rangeX_si128; ox += sizeof(__m128i) / sizeof(uint32_t))
-    {
-      const __m128i val = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]));
+    const __m128i sum16 = _mm_add_epi16(_mm_shuffle_epi8(val, shuffle_8lo_16), _mm_shuffle_epi8(val, shuffle_8hi_16));
+    const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
 
-      const __m128i sum16 = _mm_add_epi16(_mm_shuffle_epi8(val, shuffle_8lo_16), _mm_shuffle_epi8(val, shuffle_8hi_16));
-      const __m128i sum32 = _mm_cvtepi16_epi32(_mm_hadd_epi16(sum16, sum16));
-
-      sum = _mm_add_epi32(sum, sum32);
-    }
-
-    for (; ox < rangeX; ox++)
-      sum = _mm_add_epi32(sum, _mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]))));
-
-    pLine += pCtx->sizeX;
+    sum = _mm_add_epi32(sum, sum32);
   }
+
+  for (; i < size; i++)
+    sum = _mm_add_epi32(sum, _mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[i]))));
 
   _mm_storeu_si128(reinterpret_cast<__m128i *>(&state.sum[0]), _mm_cvtepu32_epi64(sum));
   _mm_storeu_si128(reinterpret_cast<__m128i *>(&state.sum[2]), _mm_cvtepu32_epi64(_mm_bsrli_si128(sum, 8)));
 }
 
 template <size_t channels>
-static LIMG_INLINE void limg_encode_sum_to_decomposition_state(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_decomposition_state &state)
+static LIMG_INLINE void limg_encode_sum_to_decomposition_state(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, limg_encode_decomposition_state &state)
 {
   if (sse41Supported)
-    limg_encode_sum_to_decomposition_state_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, state);
+    limg_encode_sum_to_decomposition_state_sse41(pCtx, pPixels, size, state);
   else
-    limg_encode_sum_to_decomposition_state_<channels>(pCtx, offsetX, offsetY, rangeX, rangeY, state);
+    limg_encode_sum_to_decomposition_state_<channels>(pCtx, pPixels, size, state);
 }
 
 bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_expand(limg_encode_context *pCtx, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_ui8_4 *pA, limg_ui8_4 *pB, const bool up, const bool down, const bool left, const bool right)
@@ -1049,10 +1041,10 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
         memcpy(pixels + yy * rx, pCtx->pSourceImage + (y + yy) * pCtx->sizeX + x, rx * sizeof(uint32_t));
 
       limg_encode_decomposition_state encode_state;
-      limg_encode_sum_to_decomposition_state<channels>(pCtx, x, y, rx, ry, encode_state);
+      limg_encode_sum_to_decomposition_state<channels>(pCtx, pixels, rangeSize, encode_state);
 
       limg_encode_3d_output<channels> decomposition;
-      limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, x, y, rx, ry, decomposition, encode_state, scratchBuffer);
+      limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, pixels, rangeSize, decomposition, encode_state, scratchBuffer);
 
       limg_color_error_state_3d<channels> color_error_state;
       limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
@@ -1217,8 +1209,8 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
         }
 
         pAu8 = reinterpret_cast<uint8_t *>(scratchBuffer);
-        pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-        pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+        pBu8 = pAu8 + rangeSize;
+        pCu8 = pBu8 + rangeSize;
       }
 
       if constexpr (decode)

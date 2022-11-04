@@ -174,7 +174,7 @@ static LIMG_DEBUG_NO_INLINE bool limg_encode_get_block_factors_accurate_from_sta
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
+LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   constexpr size_t channels = 3;
 
@@ -185,52 +185,43 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   const __m128 zero_alpha = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
   const __m128 preferenceBias = _mm_set_ps(0, FLT_EPSILON * 1, FLT_EPSILON * 2, FLT_EPSILON * 3);
 
-  const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
   uint32_t avg[channels];
 
   for (size_t i = 0; i < channels; i++)
     avg[i] = (uint32_t)state.sum[i];
 
-  const __m128 inv_count_ = _mm_set1_ps(1.f / (float)(rangeX * rangeY));
+  const __m128 inv_count_ = _mm_set1_ps(1.f / (float)(size));
   const __m128 avg_ = _mm_mul_ps(_mm_cvtepi32_ps(_mm_loadu_si128(reinterpret_cast<const __m128i *>(avg))), inv_count_);
 
   __m128 diff_xi_dirA_ = _mm_setzero_ps();
 
   {
-    const uint32_t *pLine = pStart;
-
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      for (size_t x = 0; x < rangeX; x++)
+      const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+      const __m128 corrected = _mm_and_ps(zero_alpha, _mm_sub_ps(px, avg_));
+
+      const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+
+      if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
       {
-        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-        const __m128 corrected = _mm_and_ps(zero_alpha, _mm_sub_ps(px, avg_));
+        const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
+        const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
+        const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+        const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+        const __m128 half_min = _mm_min_ps(minBiased, min_23);
+        const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+        const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+        const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+        const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
-        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+        const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0x7F))); // should be 0xFF with 4 channels.
+        const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
 
-        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
-        {
-          const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
-          const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
-          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
-          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
-          const __m128 half_min = _mm_min_ps(minBiased, min_23);
-          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
-          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
-          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
-          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
+        const __m128 val = _mm_mul_ps(corrected, invLength4);
+        diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
 
-          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0x7F))); // should be 0xFF with 4 channels.
-          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
-
-          const __m128 val = _mm_mul_ps(corrected, invLength4);
-          diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
-
-        }
       }
-
-      pLine += pCtx->sizeX;
     }
 
     diff_xi_dirA_ = _mm_mul_ps(diff_xi_dirA_, inv_count_);
@@ -255,49 +246,42 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
     const __m128 inv_length_diff_xi_dirA = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirA_, diff_xi_dirA_, 0x7F)); // should be 0xFF with 4 channels.
 
     {
-      const uint32_t *pLine = pStart;
-
-      for (size_t y = 0; y < rangeY; y++)
+      for (size_t i = 0; i < size; i++)
       {
-        for (size_t x = 0; x < rangeX; x++)
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+        const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
+
+        const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0x7F), inv_length_diff_xi_dirA); // should be 0xFF with 4 channels.
+        const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
+
+        min_dirA = _mm_min_ps(min_dirA, facA);
+        max_dirA = _mm_max_ps(max_dirA, facA);
+
+        const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
+        const __m128 error_vec_dirA = _mm_and_ps(zero_alpha, _mm_sub_ps(px, estimateA));
+
+        _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
+        pEstimate++;
+
+        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
+
+        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
         {
-          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-          const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
+          const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
+          const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
+          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 half_min = _mm_min_ps(minBiased, min_23);
+          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
-          const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0x7F), inv_length_diff_xi_dirA); // should be 0xFF with 4 channels.
-          const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
+          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirA, error_vec_dirA, 0x7F))); // should be 0xFF with 4 channels.
+          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
 
-          min_dirA = _mm_min_ps(min_dirA, facA);
-          max_dirA = _mm_max_ps(max_dirA, facA);
-
-          const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
-          const __m128 error_vec_dirA = _mm_and_ps(zero_alpha, _mm_sub_ps(px, estimateA));
-
-          _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
-          pEstimate++;
-
-          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
-
-          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
-          {
-            const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
-            const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
-            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 half_min = _mm_min_ps(minBiased, min_23);
-            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
-            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
-            const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
-            const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
-
-            const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirA, error_vec_dirA, 0x7F))); // should be 0xFF with 4 channels.
-            const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
-
-            diff_xi_dirB_ = _mm_add_ps(diff_xi_dirB_, _mm_mul_ps(error_vec_dirA, invLength4));
-          }
+          diff_xi_dirB_ = _mm_add_ps(diff_xi_dirB_, _mm_mul_ps(error_vec_dirA, invLength4));
         }
-
-        pLine += pCtx->sizeX;
       }
 
       diff_xi_dirB_ = _mm_mul_ps(diff_xi_dirB_, inv_count_);
@@ -323,35 +307,28 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
     max_dirC = max_dirB = _mm_set1_ps(-FLT_MAX);
 
     {
-      const uint32_t *pLine = pStart;
-
-      for (size_t y = 0; y < rangeY; y++)
+      for (size_t i = 0; i < size; i++)
       {
-        for (size_t x = 0; x < rangeX; x++)
-        {
-          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
 
-          const __m128 estimateA = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
-          pEstimate++;
+        const __m128 estimateA = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
+        pEstimate++;
 
-          const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
+        const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
 
-          const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0x7F), inv_length_diff_xi_dirB); // should be 0xFF with 4 channels.
-          const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
+        const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0x7F), inv_length_diff_xi_dirB); // should be 0xFF with 4 channels.
+        const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
 
-          min_dirB = _mm_min_ps(min_dirB, facB);
-          max_dirB = _mm_max_ps(max_dirB, facB);
+        min_dirB = _mm_min_ps(min_dirB, facB);
+        max_dirB = _mm_max_ps(max_dirB, facB);
 
-          const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
-          const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
+        const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
+        const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
 
-          const __m128 facC = _mm_mul_ps(_mm_dp_ps(error_vec_dirAB, diff_xi_dirC_, 0x7F), inv_length_diff_xi_dirC); // should be 0xFF with 4 channels.
+        const __m128 facC = _mm_mul_ps(_mm_dp_ps(error_vec_dirAB, diff_xi_dirC_, 0x7F), inv_length_diff_xi_dirC); // should be 0xFF with 4 channels.
 
-          min_dirC = _mm_min_ps(min_dirC, facC);
-          max_dirC = _mm_max_ps(max_dirC, facC);
-        }
-
-        pLine += pCtx->sizeX;
+        min_dirC = _mm_min_ps(min_dirC, facC);
+        max_dirC = _mm_max_ps(max_dirC, facC);
       }
     }
   }
@@ -393,7 +370,7 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
+LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   constexpr size_t channels = 4;
 
@@ -403,52 +380,43 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
   const __m128 inv_sign_bit = _mm_castsi128_ps(_mm_set1_epi32(~(1 << 31)));
   const __m128 preferenceBias = _mm_set_ps(0, FLT_EPSILON * 1, FLT_EPSILON * 2, FLT_EPSILON * 3);
 
-  const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
   uint32_t avg[channels];
 
   for (size_t i = 0; i < channels; i++)
     avg[i] = (uint32_t)state.sum[i];
 
-  const __m128 inv_count_ = _mm_set1_ps(1.f / (float)(rangeX * rangeY));
+  const __m128 inv_count_ = _mm_set1_ps(1.f / (float)(size));
   const __m128 avg_ = _mm_mul_ps(_mm_cvtepi32_ps(_mm_loadu_si128(reinterpret_cast<const __m128i *>(avg))), inv_count_);
 
   __m128 diff_xi_dirA_ = _mm_setzero_ps();
 
   {
-    const uint32_t *pLine = pStart;
-
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      for (size_t x = 0; x < rangeX; x++)
+      const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+      const __m128 corrected = _mm_sub_ps(px, avg_);
+
+      const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+
+      if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
       {
-        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-        const __m128 corrected = _mm_sub_ps(px, avg_);
+        const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
+        const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
+        const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+        const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+        const __m128 half_min = _mm_min_ps(minBiased, min_23);
+        const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+        const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+        const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+        const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
-        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(corrected, _mm_setzero_ps()));
+        const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0xFF)));
+        const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
 
-        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
-        {
-          const __m128 minBiased = _mm_sub_ps(corrected, preferenceBias);
-          const __m128 maxBiased = _mm_add_ps(corrected, preferenceBias);
-          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
-          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
-          const __m128 half_min = _mm_min_ps(minBiased, min_23);
-          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
-          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
-          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
-          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
+        const __m128 val = _mm_mul_ps(corrected, invLength4);
+        diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
 
-          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(corrected, corrected, 0xFF)));
-          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
-
-          const __m128 val = _mm_mul_ps(corrected, invLength4);
-          diff_xi_dirA_ = _mm_add_ps(diff_xi_dirA_, val);
-
-        }
       }
-
-      pLine += pCtx->sizeX;
     }
 
     diff_xi_dirA_ = _mm_mul_ps(diff_xi_dirA_, inv_count_);
@@ -473,49 +441,42 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     const __m128 inv_length_diff_xi_dirA = _mm_div_ps(_mm_set1_ps(1.f), _mm_dp_ps(diff_xi_dirA_, diff_xi_dirA_, 0xFF));
 
     {
-      const uint32_t *pLine = pStart;
-
-      for (size_t y = 0; y < rangeY; y++)
+      for (size_t i = 0; i < size; i++)
       {
-        for (size_t x = 0; x < rangeX; x++)
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+        const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
+
+        const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0xFF), inv_length_diff_xi_dirA);
+        const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
+
+        min_dirA = _mm_min_ps(min_dirA, facA);
+        max_dirA = _mm_max_ps(max_dirA, facA);
+
+        const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
+        const __m128 error_vec_dirA = _mm_sub_ps(px, estimateA);
+
+        _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
+        pEstimate++;
+
+        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
+
+        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
         {
-          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-          const __m128 lineOriginToPx = _mm_sub_ps(px, avg_);
+          const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
+          const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
+          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 half_min = _mm_min_ps(minBiased, min_23);
+          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
-          const __m128 facA = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirA_, 0xFF), inv_length_diff_xi_dirA);
-          const __m128 facA_full = _mm_shuffle_ps(facA, facA, _MM_SHUFFLE(0, 0, 0, 0));
+          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirA, error_vec_dirA, 0xFF)));
+          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
 
-          min_dirA = _mm_min_ps(min_dirA, facA);
-          max_dirA = _mm_max_ps(max_dirA, facA);
-
-          const __m128 estimateA = _mm_add_ps(avg_, _mm_mul_ps(facA_full, diff_xi_dirA_));
-          const __m128 error_vec_dirA = _mm_sub_ps(px, estimateA);
-
-          _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateA);
-          pEstimate++;
-
-          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirA, _mm_setzero_ps()));
-
-          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
-          {
-            const __m128 minBiased = _mm_sub_ps(error_vec_dirA, preferenceBias);
-            const __m128 maxBiased = _mm_add_ps(error_vec_dirA, preferenceBias);
-            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 half_min = _mm_min_ps(minBiased, min_23);
-            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
-            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
-            const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
-            const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
-
-            const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirA, error_vec_dirA, 0xFF)));
-            const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
-
-            diff_xi_dirB_ = _mm_add_ps(diff_xi_dirB_, _mm_mul_ps(error_vec_dirA, invLength4));
-          }
+          diff_xi_dirB_ = _mm_add_ps(diff_xi_dirB_, _mm_mul_ps(error_vec_dirA, invLength4));
         }
-
-        pLine += pCtx->sizeX;
       }
 
       diff_xi_dirB_ = _mm_mul_ps(diff_xi_dirB_, inv_count_);
@@ -529,52 +490,45 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     max_dirC = max_dirB = _mm_set1_ps(-FLT_MAX);
 
     {
-      const uint32_t *pLine = pStart;
-
-      for (size_t y = 0; y < rangeY; y++)
+      for (size_t i = 0; i < size; i++)
       {
-        for (size_t x = 0; x < rangeX; x++)
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+        const __m128 estimateA = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
+        const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
+
+        const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0xFF), inv_length_diff_xi_dirB);
+        const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
+
+        min_dirB = _mm_min_ps(min_dirB, facB);
+        max_dirB = _mm_max_ps(max_dirB, facB);
+
+        const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
+        const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
+
+        _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateB);
+        pEstimate++;
+
+        const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirAB, _mm_setzero_ps()));
+
+        if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
         {
-          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-          const __m128 estimateA = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
-          const __m128 lineOriginToPx = _mm_sub_ps(px, estimateA);
+          const __m128 minBiased = _mm_sub_ps(error_vec_dirAB, preferenceBias);
+          const __m128 maxBiased = _mm_add_ps(error_vec_dirAB, preferenceBias);
+          const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
+          const __m128 half_min = _mm_min_ps(minBiased, min_23);
+          const __m128 half_max = _mm_max_ps(maxBiased, max_23);
+          const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
+          const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
+          const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
 
-          const __m128 facB = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirB_, 0xFF), inv_length_diff_xi_dirB);
-          const __m128 facB_full = _mm_shuffle_ps(facB, facB, _MM_SHUFFLE(0, 0, 0, 0));
+          const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirAB, error_vec_dirAB, 0xFF)));
+          const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
 
-          min_dirB = _mm_min_ps(min_dirB, facB);
-          max_dirB = _mm_max_ps(max_dirB, facB);
-
-          const __m128 estimateB = _mm_add_ps(estimateA, _mm_mul_ps(facB_full, diff_xi_dirB_));
-          const __m128 error_vec_dirAB = _mm_sub_ps(px, estimateB);
-
-          _mm_storeu_ps(reinterpret_cast<float *>(pEstimate), estimateB);
-          pEstimate++;
-
-          const int32_t mask = _mm_movemask_ps(_mm_cmpeq_ps(error_vec_dirAB, _mm_setzero_ps()));
-
-          if (0b1111 != mask) // can we use a different kind of `cmp` here? maybe `epi32` works fine as well?
-          {
-            const __m128 minBiased = _mm_sub_ps(error_vec_dirAB, preferenceBias);
-            const __m128 maxBiased = _mm_add_ps(error_vec_dirAB, preferenceBias);
-            const __m128 min_23 = _mm_shuffle_ps(minBiased, minBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 max_23 = _mm_shuffle_ps(maxBiased, maxBiased, _MM_SHUFFLE(0, 0, 3, 2));
-            const __m128 half_min = _mm_min_ps(minBiased, min_23);
-            const __m128 half_max = _mm_max_ps(maxBiased, max_23);
-            const __m128 abs_min = _mm_and_ps(inv_sign_bit, _mm_min_ps(half_min, _mm_shuffle_ps(half_min, half_min, _MM_SHUFFLE(0, 0, 0, 1))));
-            const __m128 max = _mm_max_ps(half_max, _mm_shuffle_ps(half_max, half_max, _MM_SHUFFLE(0, 0, 0, 1)));
-            const __m128 flip_sign = _mm_and_ps(sign_bit, _mm_cmpgt_ps(abs_min, max));
-
-            const __m128 invLength = _mm_xor_ps(flip_sign, _mm_rsqrt_ps(_mm_dp_ps(error_vec_dirAB, error_vec_dirAB, 0xFF)));
-            const __m128 invLength4 = _mm_shuffle_ps(invLength, invLength, _MM_SHUFFLE(0, 0, 0, 0));
-
-            diff_xi_dirC_ = _mm_add_ps(diff_xi_dirC_, _mm_mul_ps(error_vec_dirAB, invLength4));
-          }
+          diff_xi_dirC_ = _mm_add_ps(diff_xi_dirC_, _mm_mul_ps(error_vec_dirAB, invLength4));
         }
-
-        pLine += pCtx->sizeX;
       }
-
+      
       diff_xi_dirC_ = _mm_mul_ps(diff_xi_dirC_, inv_count_);
     }
 
@@ -583,23 +537,16 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     pEstimate = reinterpret_cast<__m128 *>(pScratch);
 
     {
-      const uint32_t *pLine = pStart;
-
-      for (size_t y = 0; y < rangeY; y++)
+      for (size_t i = 0; i < size; i++)
       {
-        for (size_t x = 0; x < rangeX; x++)
-        {
-          const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[x]))));
-          const __m128 estimateAB = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
-          const __m128 lineOriginToPx = _mm_sub_ps(px, estimateAB);
+        const __m128 px = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+        const __m128 estimateAB = _mm_loadu_ps(reinterpret_cast<float *>(pEstimate));
+        const __m128 lineOriginToPx = _mm_sub_ps(px, estimateAB);
 
-          const __m128 facC = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirC_, 0xFF), inv_length_diff_xi_dirC);
+        const __m128 facC = _mm_mul_ps(_mm_dp_ps(lineOriginToPx, diff_xi_dirC_, 0xFF), inv_length_diff_xi_dirC);
 
-          min_dirC = _mm_min_ps(min_dirC, facC);
-          max_dirC = _mm_max_ps(max_dirC, facC);
-        }
-
-        pLine += pCtx->sizeX;
+        min_dirC = _mm_min_ps(min_dirC, facC);
+        max_dirC = _mm_max_ps(max_dirC, facC);
       }
     }
   }
@@ -630,15 +577,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
   *reinterpret_cast<uint64_t *>(out.dirC_mag) = _mm_extract_epi64(dirCmax, 0);
 }
 
-LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
+LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   constexpr size_t channels = 3;
 
-  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pPixels);
 
   float avg[channels];
 
-  const float inv_count = 1.f / (float)(rangeX * rangeY);
+  const float inv_count = 1.f / (float)(size);
 
   for (size_t i = 0; i < channels; i++)
     avg[i] = state.sum[i] * inv_count;
@@ -650,46 +597,40 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
   for (size_t i = 0; i < channels; i++)
     diff_xi_dirA[i] = 0;
 
-  for (size_t y = 0; y < rangeY; y++)
+  for (size_t i = 0; i < size; i++)
   {
-    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+    const limg_ui8_4 px = pStart[i];
 
-    for (size_t x = 0; x < rangeX; x++)
+    float corrected[channels];
+    float max_abs = 0;
+    size_t max_idx = 0;
+
+    for (size_t j = 0; j < channels; j++)
     {
-      limg_ui8_4 px = *pLine;
-      pLine++;
+      corrected[j] = (float)px[j] - avg[j];
 
-      float corrected[channels];
-      float max_abs = 0;
-      size_t max_idx = 0;
+      const float abs_val = fabsf(corrected[j]);
 
-      for (size_t i = 0; i < channels; i++)
+      if (abs_val > max_abs)
       {
-        corrected[i] = (float)px[i] - avg[i];
-
-        const float abs_val = fabsf(corrected[i]);
-
-        if (abs_val > max_abs)
-        {
-          max_abs = abs_val;
-          max_idx = i;
-        }
+        max_abs = abs_val;
+        max_idx = j;
       }
+    }
 
-      if (max_abs != 0)
-      {
-        max_abs = corrected[max_idx];
+    if (max_abs != 0)
+    {
+      max_abs = corrected[max_idx];
 
-        float lengthSquared = 0;
+      float lengthSquared = 0;
 
-        for (size_t i = 0; i < channels; i++)
-          lengthSquared += corrected[i] * corrected[i];
+      for (size_t j = 0; j < channels; j++)
+        lengthSquared += corrected[j] * corrected[j];
 
-        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
+      const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
-        for (size_t i = 0; i < channels; i++)
-          diff_xi_dirA[i] += corrected[i] * inv_length;
-      }
+      for (size_t j = 0; j < channels; j++)
+        diff_xi_dirA[j] += corrected[j] * inv_length;
     }
   }
 
@@ -733,64 +674,58 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
 
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+      const limg_ui8_4 px = pStart[i];
 
-      for (size_t x = 0; x < rangeX; x++)
+      float lineOriginToPx[channels];
+
+      for (size_t j = 0; j < channels; j++)
+        lineOriginToPx[j] = (float)px[j] - avg[j];
+
+      const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
+
+      min_dirA = limgMin(min_dirA, facA);
+      max_dirA = limgMax(max_dirA, facA);
+
+      float error_vec_dirA[channels];
+      float max_abs = 0;
+      size_t max_idx = 0;
+
+      for (size_t j = 0; j < channels; j++)
       {
-        limg_ui8_4 px = *pLine;
-        pLine++;
+        pEstimate[j] = avg[j] + facA * diff_xi_dirA[j];
+        error_vec_dirA[j] = (float)px[j] - pEstimate[j];
 
-        float lineOriginToPx[channels];
+        const float abs_val = fabsf(error_vec_dirA[j]);
 
-        for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = (float)px[i] - avg[i];
-
-        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
-
-        min_dirA = limgMin(min_dirA, facA);
-        max_dirA = limgMax(max_dirA, facA);
-
-        float error_vec_dirA[channels];
-        float max_abs = 0;
-        size_t max_idx = 0;
-
-        for (size_t i = 0; i < channels; i++)
+        if (abs_val > max_abs)
         {
-          pEstimate[i] = avg[i] + facA * diff_xi_dirA[i];
-          error_vec_dirA[i] = (float)px[i] - pEstimate[i];
-
-          const float abs_val = fabsf(error_vec_dirA[i]);
-
-          if (abs_val > max_abs)
-          {
-            max_abs = abs_val;
-            max_idx = i;
-          }
+          max_abs = abs_val;
+          max_idx = j;
         }
+      }
 
-        pEstimate += channels;
+      pEstimate += channels;
 
-        if (max_abs != 0)
-        {
-          max_abs = error_vec_dirA[max_idx];
+      if (max_abs != 0)
+      {
+        max_abs = error_vec_dirA[max_idx];
 
-          float lengthSquared = 0;
+        float lengthSquared = 0;
 
-          for (size_t i = 0; i < channels; i++)
-            lengthSquared += error_vec_dirA[i] * error_vec_dirA[i];
+        for (size_t j = 0; j < channels; j++)
+          lengthSquared += error_vec_dirA[j] * error_vec_dirA[j];
 
-          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
+        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
-          for (size_t i = 0; i < channels; i++)
-            diff_xi_dirB[i] += error_vec_dirA[i] * inv_length;
-        }
+        for (size_t j = 0; j < channels; j++)
+          diff_xi_dirB[j] += error_vec_dirA[j] * inv_length;
       }
     }
 
-    for (size_t i = 0; i < channels; i++)
-      diff_xi_dirB[i] *= inv_count;
+    for (size_t j = 0; j < channels; j++)
+      diff_xi_dirB[j] *= inv_count;
 
     limg_cross(diff_xi_dirA, diff_xi_dirB, diff_xi_dirC);
 
@@ -804,40 +739,34 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
     min_dirC = FLT_MAX;
     max_dirC = -FLT_MAX;
 
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+      const limg_ui8_4 px = pStart[i];
 
-      for (size_t x = 0; x < rangeX; x++)
+      float lineOriginToPx[channels];
+
+      for (size_t j = 0; j < channels; j++)
+        lineOriginToPx[j] = px[j] - pEstimate[j];
+
+      const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
+
+      min_dirB = limgMin(min_dirB, facB);
+      max_dirB = limgMax(max_dirB, facB);
+
+      float error_vec_dirAB[channels];
+
+      for (size_t j = 0; j < channels; j++)
       {
-        limg_ui8_4 px = *pLine;
-        pLine++;
-
-        float lineOriginToPx[channels];
-
-        for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = px[i] - pEstimate[i];
-
-        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
-
-        min_dirB = limgMin(min_dirB, facB);
-        max_dirB = limgMax(max_dirB, facB);
-
-        float error_vec_dirAB[channels];
-
-        for (size_t i = 0; i < channels; i++)
-        {
-          const float estimage = (pEstimate[i] + facB * diff_xi_dirB[i]);
-          error_vec_dirAB[i] = (float)px[i] - estimage;
-        }
-
-        const float facC = limg_dot<float, channels>(error_vec_dirAB, diff_xi_dirC) * inv_length_diff_xi_dirC;
-
-        min_dirC = limgMin(min_dirC, facC);
-        max_dirC = limgMax(max_dirC, facC);
-
-        pEstimate += channels;
+        const float estimage = (pEstimate[j] + facB * diff_xi_dirB[j]);
+        error_vec_dirAB[j] = (float)px[j] - estimage;
       }
+
+      const float facC = limg_dot<float, channels>(error_vec_dirAB, diff_xi_dirC) * inv_length_diff_xi_dirC;
+
+      min_dirC = limgMin(min_dirC, facC);
+      max_dirC = limgMax(max_dirC, facC);
+
+      pEstimate += channels;
     }
   }
 
@@ -854,15 +783,15 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 }
 
 // Since the cross product isn't defined in R4 and using three vectors we can't possibly represent all values in R4, so we'd rather get the closest possible direction we can get.
-LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
+LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<4> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   constexpr size_t channels = 4;
 
-  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
+  const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pPixels);
 
   float avg[channels];
 
-  const float inv_count = 1.f / (float)(rangeX * rangeY);
+  const float inv_count = 1.f / (float)(size);
 
   for (size_t i = 0; i < channels; i++)
     avg[i] = state.sum[i] * inv_count;
@@ -874,46 +803,40 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
   for (size_t i = 0; i < channels; i++)
     diff_xi_dirA[i] = 0;
 
-  for (size_t y = 0; y < rangeY; y++)
+  for (size_t i = 0; i < size; i++)
   {
-    const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+    const limg_ui8_4 px = pStart[i];
 
-    for (size_t x = 0; x < rangeX; x++)
+    float corrected[channels];
+    float max_abs = 0;
+    size_t max_idx = 0;
+
+    for (size_t j = 0; j < channels; j++)
     {
-      limg_ui8_4 px = *pLine;
-      pLine++;
+      corrected[j] = (float)px[j] - avg[j];
 
-      float corrected[channels];
-      float max_abs = 0;
-      size_t max_idx = 0;
+      const float abs_val = fabsf(corrected[j]);
 
-      for (size_t i = 0; i < channels; i++)
+      if (abs_val > max_abs)
       {
-        corrected[i] = (float)px[i] - avg[i];
-
-        const float abs_val = fabsf(corrected[i]);
-
-        if (abs_val > max_abs)
-        {
-          max_abs = abs_val;
-          max_idx = i;
-        }
+        max_abs = abs_val;
+        max_idx = j;
       }
+    }
 
-      if (max_abs != 0)
-      {
-        max_abs = corrected[max_idx];
+    if (max_abs != 0)
+    {
+      max_abs = corrected[max_idx];
 
-        float lengthSquared = 0;
+      float lengthSquared = 0;
 
-        for (size_t i = 0; i < channels; i++)
-          lengthSquared += corrected[i] * corrected[i];
+      for (size_t j = 0; j < channels; j++)
+        lengthSquared += corrected[j] * corrected[j];
 
-        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
+      const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
-        for (size_t i = 0; i < channels; i++)
-          diff_xi_dirA[i] += corrected[i] * inv_length;
-      }
+      for (size_t j = 0; j < channels; j++)
+        diff_xi_dirA[j] += corrected[j] * inv_length;
     }
   }
 
@@ -957,59 +880,53 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     for (size_t i = 0; i < channels; i++)
       diff_xi_dirC[i] = diff_xi_dirB[i] = 0;
 
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+      const limg_ui8_4 px = pStart[i];
 
-      for (size_t x = 0; x < rangeX; x++)
+      float lineOriginToPx[channels];
+
+      for (size_t j = 0; j < channels; j++)
+        lineOriginToPx[j] = (float)px[j] - avg[j];
+
+      const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
+
+      min_dirA = limgMin(min_dirA, facA);
+      max_dirA = limgMax(max_dirA, facA);
+
+      float error_vec_dirA[channels];
+      float max_abs = 0;
+      size_t max_idx = 0;
+
+      for (size_t j = 0; j < channels; j++)
       {
-        limg_ui8_4 px = *pLine;
-        pLine++;
+        pEstimate[j] = avg[j] + facA * diff_xi_dirA[j];
+        error_vec_dirA[j] = (float)px[j] - pEstimate[j];
 
-        float lineOriginToPx[channels];
+        const float abs_val = fabsf(error_vec_dirA[j]);
 
-        for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = (float)px[i] - avg[i];
-
-        const float facA = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirA) * inv_length_diff_xi_dirA;
-
-        min_dirA = limgMin(min_dirA, facA);
-        max_dirA = limgMax(max_dirA, facA);
-
-        float error_vec_dirA[channels];
-        float max_abs = 0;
-        size_t max_idx = 0;
-
-        for (size_t i = 0; i < channels; i++)
+        if (abs_val > max_abs)
         {
-          pEstimate[i] = avg[i] + facA * diff_xi_dirA[i];
-          error_vec_dirA[i] = (float)px[i] - pEstimate[i];
-
-          const float abs_val = fabsf(error_vec_dirA[i]);
-
-          if (abs_val > max_abs)
-          {
-            max_abs = abs_val;
-            max_idx = i;
-          }
+          max_abs = abs_val;
+          max_idx = j;
         }
+      }
 
-        pEstimate += channels;
+      pEstimate += channels;
 
-        if (max_abs != 0)
-        {
-          max_abs = error_vec_dirA[max_idx];
+      if (max_abs != 0)
+      {
+        max_abs = error_vec_dirA[max_idx];
 
-          float lengthSquared = 0;
+        float lengthSquared = 0;
 
-          for (size_t i = 0; i < channels; i++)
-            lengthSquared += error_vec_dirA[i] * error_vec_dirA[i];
+        for (size_t j = 0; j < channels; j++)
+          lengthSquared += error_vec_dirA[j] * error_vec_dirA[j];
 
-          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
+        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
-          for (size_t i = 0; i < channels; i++)
-            diff_xi_dirB[i] += error_vec_dirA[i] * inv_length;
-        }
+        for (size_t j = 0; j < channels; j++)
+          diff_xi_dirB[j] += error_vec_dirA[j] * inv_length;
       }
     }
 
@@ -1023,64 +940,58 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
 
     pEstimate = pScratch;
 
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+      const limg_ui8_4 px = pStart[i];
 
-      for (size_t x = 0; x < rangeX; x++)
+      float lineOriginToPx[channels];
+
+      for (size_t j = 0; j < channels; j++)
+        lineOriginToPx[j] = px[j] - pEstimate[j];
+
+      const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
+
+      min_dirB = limgMin(min_dirB, facB);
+      max_dirB = limgMax(max_dirB, facB);
+
+      float error_vec_dirAB[channels];
+      float max_abs = 0;
+      size_t max_idx = 0;
+
+      for (size_t j = 0; j < channels; j++)
       {
-        limg_ui8_4 px = *pLine;
-        pLine++;
+        pEstimate[j] = (pEstimate[j] + facB * diff_xi_dirB[j]);
+        error_vec_dirAB[j] = (float)px[j] - pEstimate[j];
 
-        float lineOriginToPx[channels];
+        const float abs_val = fabsf(error_vec_dirAB[j]);
 
-        for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = px[i] - pEstimate[i];
-
-        const float facB = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirB) * inv_length_diff_xi_dirB;
-
-        min_dirB = limgMin(min_dirB, facB);
-        max_dirB = limgMax(max_dirB, facB);
-
-        float error_vec_dirAB[channels];
-        float max_abs = 0;
-        size_t max_idx = 0;
-
-        for (size_t i = 0; i < channels; i++)
+        if (abs_val > max_abs)
         {
-          pEstimate[i] = (pEstimate[i] + facB * diff_xi_dirB[i]);
-          error_vec_dirAB[i] = (float)px[i] - pEstimate[i];
-
-          const float abs_val = fabsf(error_vec_dirAB[i]);
-
-          if (abs_val > max_abs)
-          {
-            max_abs = abs_val;
-            max_idx = i;
-          }
+          max_abs = abs_val;
+          max_idx = j;
         }
+      }
 
-        pEstimate += channels;
+      pEstimate += channels;
 
-        if (max_abs != 0)
-        {
-          max_abs = error_vec_dirAB[max_idx];
+      if (max_abs != 0)
+      {
+        max_abs = error_vec_dirAB[max_idx];
 
-          float lengthSquared = 0;
+        float lengthSquared = 0;
 
-          for (size_t i = 0; i < channels; i++)
-            lengthSquared += error_vec_dirAB[i] * error_vec_dirAB[i];
+        for (size_t j = 0; j < channels; j++)
+          lengthSquared += error_vec_dirAB[j] * error_vec_dirAB[j];
 
-          const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
+        const float inv_length = copysignf(_mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(lengthSquared))), max_abs);
 
-          for (size_t i = 0; i < channels; i++)
-            diff_xi_dirC[i] += error_vec_dirAB[i] * inv_length;
-        }
+        for (size_t j = 0; j < channels; j++)
+          diff_xi_dirC[j] += error_vec_dirAB[j] * inv_length;
       }
     }
 
-    for (size_t i = 0; i < channels; i++)
-      diff_xi_dirC[i] *= inv_count;
+    for (size_t j = 0; j < channels; j++)
+      diff_xi_dirC[j] *= inv_count;
 
     const float inv_length_diff_xi_dirC = 1.f / limg_dot<float, channels>(diff_xi_dirC, diff_xi_dirC);
 
@@ -1089,27 +1000,21 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
     min_dirC = FLT_MAX;
     max_dirC = -FLT_MAX;
 
-    for (size_t y = 0; y < rangeY; y++)
+    for (size_t i = 0; i < size; i++)
     {
-      const limg_ui8_4 *pLine = pStart + pCtx->sizeX * y;
+      const limg_ui8_4 px = pStart[i];
 
-      for (size_t x = 0; x < rangeX; x++)
-      {
-        limg_ui8_4 px = *pLine;
-        pLine++;
+      float lineOriginToPx[channels];
 
-        float lineOriginToPx[channels];
+      for (size_t j = 0; j < channels; j++)
+        lineOriginToPx[j] = px[j] - pEstimate[j];
 
-        for (size_t i = 0; i < channels; i++)
-          lineOriginToPx[i] = px[i] - pEstimate[i];
+      const float facC = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirC) * inv_length_diff_xi_dirC;
 
-        const float facC = limg_dot<float, channels>(lineOriginToPx, diff_xi_dirC) * inv_length_diff_xi_dirC;
+      min_dirC = limgMin(min_dirC, facC);
+      max_dirC = limgMax(max_dirC, facC);
 
-        min_dirC = limgMin(min_dirC, facC);
-        max_dirC = limgMax(max_dirC, facC);
-
-        pEstimate += channels;
-      }
+      pEstimate += channels;
     }
   }
 
@@ -1126,21 +1031,21 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
 }
 
 template <size_t channels>
-static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, limg_encode_3d_output<channels> &out, limg_encode_decomposition_state &state, float *pScratch)
+static LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<channels> &out, limg_encode_decomposition_state &state, float *pScratch)
 {
   if constexpr (channels == 3)
   {
     if (sse41Supported)
-      limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+      limg_encode_get_block_factors_accurate_from_state_3d_3_sse41(pCtx, pPixels, size, out, state, pScratch);
     else
-      limg_encode_get_block_factors_accurate_from_state_3d_3(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+      limg_encode_get_block_factors_accurate_from_state_3d_3(pCtx, pPixels, size, out, state, pScratch);
   }
   else
   {
     if (sse41Supported)
-      limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+      limg_encode_get_block_factors_accurate_from_state_3d_4_sse41(pCtx, pPixels, size, out, state, pScratch);
     else
-      limg_encode_get_block_factors_accurate_from_state_3d_4(pCtx, offsetX, offsetY, rangeX, rangeY, out, state, pScratch);
+      limg_encode_get_block_factors_accurate_from_state_3d_4(pCtx, pPixels, size, out, state, pScratch);
   }
 }
 
