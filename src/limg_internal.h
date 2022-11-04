@@ -464,35 +464,30 @@ static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &
 }
 
 template <size_t channels>
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_(const limg_encode_context *pCtx, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
+LIMG_INLINE void limg_color_error_state_3d_get_all_factors_(const limg_encode_context *, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
 {
-  for (size_t oy = 0; oy < rangeY; oy++)
+  const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pPixels);
+
+  for (size_t i = 0; i < size; i++)
   {
-    const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pCtx->pSourceImage + (oy + offsetY) * pCtx->sizeX + offsetX);
+    float a, b, c;
 
-    for (size_t ox = 0; ox < rangeX; ox++)
-    {
-      float a, b, c;
+    limg_color_error_state_3d_get_factors<channels>(pLine[i], decomposition, color_error_state, a, b, c);
 
-      limg_color_error_state_3d_get_factors<channels>(*pLine, decomposition, color_error_state, a, b, c);
+    *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);
+    *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);
+    *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);
 
-      *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);
-      *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);
-      *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);
-
-      pAu8++;
-      pBu8++;
-      pCu8++;
-
-      pLine++;
-    }
+    pAu8++;
+    pBu8++;
+    pCu8++;
   }
 }
 
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_encode_context *pCtx, const limg_encode_3d_output<3> &decomposition, const limg_color_error_state_3d<3> &color_error_state, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
+LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_encode_context *, const limg_encode_3d_output<3> &decomposition, const limg_color_error_state_3d<3> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
 {
   _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
 
@@ -508,49 +503,42 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_en
   const __m128i hexFF_ = _mm_set1_epi32(0xFF);
   const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
 
-  const uint32_t *pLine = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetY * pCtx->sizeX + offsetX);
-
-  for (size_t oy = 0; oy < rangeY; oy++)
+  for (size_t i = 0; i < size; i++)
   {
-    for (size_t ox = 0; ox < rangeX; ox++)
-    {
-      const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]))));
-      const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
+    const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+    const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
 
-      const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0x7F);
-      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
+    const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0x7F);
+    const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
 
-      // I've tried a bunch of variations, but this one appears to be the fastest way of doing this that I could come up with.
-      *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
-      pAu8++;
+    // I've tried a bunch of variations, but this one appears to be the fastest way of doing this that I could come up with.
+    *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
+    pAu8++;
 
-      __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
-      const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
+    __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
+    const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
 
-      const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0x7F);
-      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
+    const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0x7F);
+    const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
 
-      *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
-      pBu8++;
+    *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
+    pBu8++;
 
-      colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
-      const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
+    colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
+    const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
 
-      const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0x7F);
-      const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
+    const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0x7F);
+    const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
 
-      *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
-      pCu8++;
-    }
-
-    pLine += pCtx->sizeX;
+    *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
+    pCu8++;
   }
 }
 
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_encode_context *pCtx, const limg_encode_3d_output<4> &decomposition, const limg_color_error_state_3d<4> &color_error_state, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
+LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_encode_context *, const limg_encode_3d_output<4> &decomposition, const limg_color_error_state_3d<4> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
 {
   _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
 
@@ -566,57 +554,50 @@ LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_en
   const __m128i hexFF_ = _mm_set1_epi32(0xFF);
   const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
 
-  const uint32_t *pLine = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetY * pCtx->sizeX + offsetX);
-
-  for (size_t oy = 0; oy < rangeY; oy++)
+  for (size_t i = 0; i < size; i++)
   {
-    for (size_t ox = 0; ox < rangeX; ox++)
-    {
-      const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pLine[ox]))));
-      const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
+    const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
+    const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
 
-      const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0xFF);
-      const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
+    const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0xFF);
+    const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
 
-      *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
-      pAu8++;
+    *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
+    pAu8++;
 
-      __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
-      const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
+    __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
+    const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
 
-      const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0xFF);
-      const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
+    const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0xFF);
+    const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
 
-      *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
-      pBu8++;
+    *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
+    pBu8++;
 
-      colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
-      const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
+    colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
+    const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
 
-      const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0xFF);
-      const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
+    const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0xFF);
+    const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
 
-      *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
-      pCu8++;
-    }
-
-    pLine += pCtx->sizeX;
+    *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
+    pCu8++;
   }
 }
 
 template <size_t channels>
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors(const limg_encode_context *pCtx, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
+LIMG_INLINE void limg_color_error_state_3d_get_all_factors(const limg_encode_context *pCtx, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
 {
   if (sse41Supported)
   {
     if constexpr (channels == 3)
-      limg_color_error_state_3d_get_all_factors_3_sse41(pCtx, decomposition, color_error_state, offsetX, offsetY, rangeX, rangeY, pAu8, pBu8, pCu8);
+      limg_color_error_state_3d_get_all_factors_3_sse41(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
     else
-      limg_color_error_state_3d_get_all_factors_4_sse41(pCtx, decomposition, color_error_state, offsetX, offsetY, rangeX, rangeY, pAu8, pBu8, pCu8);
+      limg_color_error_state_3d_get_all_factors_4_sse41(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
   }
   else
   {
-    limg_color_error_state_3d_get_all_factors_(pCtx, decomposition, color_error_state, offsetX, offsetY, rangeX, rangeY, pAu8, pBu8, pCu8);
+    limg_color_error_state_3d_get_all_factors_(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
   }
 }
 

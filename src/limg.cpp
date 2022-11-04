@@ -1031,8 +1031,8 @@ epilogue:
 template <size_t channels, bool store_factors_shift, bool decode, bool store_accum_bits>
 void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
 {
-  float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4]; // technically `* 3` or `* 4` depending on `hasAlpha` being either `false` or `true`.
-  uint8_t scratch_u8[limg_MinBlockSize * limg_MinBlockSize * 3];
+  float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4];
+  uint32_t pixels[limg_MinBlockSize * limg_MinBlockSize];
 
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
 
@@ -1043,6 +1043,11 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       const size_t rx = limgMin(pCtx->sizeX - x, limg_MinBlockSize);
       const size_t ry = limgMin(pCtx->sizeY - y, limg_MinBlockSize);
 
+      const size_t rangeSize = rx * ry;
+
+      for (size_t yy = 0; yy < ry; yy++)
+        memcpy(pixels + yy * rx, pCtx->pSourceImage + (y + yy) * pCtx->sizeX + x, rx * sizeof(uint32_t));
+
       limg_encode_decomposition_state encode_state;
       limg_encode_sum_to_decomposition_state<channels>(pCtx, x, y, rx, ry, encode_state);
 
@@ -1052,22 +1057,21 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
       limg_color_error_state_3d<channels> color_error_state;
       limg_init_color_error_state_3d<channels>(decomposition, color_error_state);
 
-      uint8_t *pAu8 = scratch_u8;
-      uint8_t *pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
-      uint8_t *pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
+      uint8_t *pAu8 = reinterpret_cast<uint8_t *>(scratchBuffer);
+      uint8_t *pBu8 = pAu8 + rangeSize;
+      uint8_t *pCu8 = pBu8 + rangeSize;
 
-      limg_color_error_state_3d_get_all_factors(pCtx, decomposition, color_error_state, x, y, rx, ry, pAu8, pBu8, pCu8);
+      limg_color_error_state_3d_get_all_factors(pCtx, decomposition, color_error_state, pixels, rangeSize, pAu8, pBu8, pCu8);
 
       uint8_t shift[3] = { 0, 0, 0 };
-      const size_t rangeSize = rx * ry;
 
       if (pCtx->crushBits)
       {
         // Try best guesses.
         if (pCtx->guessCrush)
-          limg_encode_guess_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
+          limg_encode_guess_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift);
 
-        limg_encode_find_shift_for_block_3d<channels>(pCtx, x, y, rx, ry, decomposition, pAu8, pBu8, pCu8, shift);
+        limg_encode_find_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift);
 
         if (shift[0] || shift[1] || shift[2])
         {
@@ -1212,7 +1216,7 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
           }
         }
 
-        pAu8 = scratch_u8;
+        pAu8 = reinterpret_cast<uint8_t *>(scratchBuffer);
         pBu8 = pAu8 + limg_MinBlockSize * limg_MinBlockSize;
         pCu8 = pBu8 + limg_MinBlockSize * limg_MinBlockSize;
       }

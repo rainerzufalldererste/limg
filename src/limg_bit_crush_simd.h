@@ -311,7 +311,7 @@ LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41_floatB(limg_encode_c
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<3> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
+LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<3> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 3;
 
@@ -381,67 +381,59 @@ LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_context 
 
   __m128i block_error_ = _mm_setzero_si128();
 
-  const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
-  for (size_t y = 0; y < rangeY; y++)
+  for (size_t i = 0; i < size; i++)
   {
-    const uint32_t *pLine = pStart + pCtx->sizeX * y;
+    const uint32_t px = pPixels[i];
 
-    for (size_t x = 0; x < rangeX; x++)
+    const __m128i px_ = _mm_cvtepu8_epi32(_mm_set1_epi32(px));
+
+    const uint8_t fA = *pA;
+    const uint8_t fB = *pB;
+    const uint8_t fC = *pC;
+
+    pA++;
+    pB++;
+    pC++;
+
+    const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
+    const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
+    const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
+    const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
+    const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
+
+    const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
+    const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
+    const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
+    const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
+
+    const __m128i diff_ = _mm_sub_epi32(px_, dec_);
+    const __m128i diff_sq_ = _mm_mullo_epi32(diff_, diff_);
+
+    const __m128i diff_sq_red_ = _mm_shuffle_epi32(diff_sq_, _MM_SHUFFLE(0, 0, 0, 0));
+    const __m128i cmp_red_thresh_ = _mm_or_si128(index13_, _mm_cmplt_epi32(diff_sq_red_, redThreshold_));
+    const __m128i col_error_mul_ = _mm_or_si128(_mm_and_si128(cmp_red_thresh_, low_red_error_cmp_flag_to_mul_), _mm_andnot_si128(cmp_red_thresh_, high_red_error_cmp_flag_to_mul_));
+
+    const __m128i error_ = _mm_mullo_epi32(diff_sq_, col_error_mul_);
+    const __m128i error_13_24_ = _mm_add_epi32(error_, _mm_srli_si128(error_, sizeof(uint32_t) * 2));
+    const __m128i error_1234_ = _mm_add_epi32(error_13_24_, _mm_srli_si128(error_, sizeof(uint32_t)));
+
+    block_error_ = _mm_add_epi32(block_error_, error_1234_);
+
+    if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
     {
-      const uint32_t px = *pLine;
-      pLine++;
-
-      const __m128i px_ = _mm_cvtepu8_epi32(_mm_set1_epi32(px));
-
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
-      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
-      const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
-      const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
-
-      const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
-      const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
-      const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
-      const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
-
-      const __m128i diff_ = _mm_sub_epi32(px_, dec_);
-      const __m128i diff_sq_ = _mm_mullo_epi32(diff_, diff_);
-
-      const __m128i diff_sq_red_ = _mm_shuffle_epi32(diff_sq_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i cmp_red_thresh_ = _mm_or_si128(index13_, _mm_cmplt_epi32(diff_sq_red_, redThreshold_));
-      const __m128i col_error_mul_ = _mm_or_si128(_mm_and_si128(cmp_red_thresh_, low_red_error_cmp_flag_to_mul_), _mm_andnot_si128(cmp_red_thresh_, high_red_error_cmp_flag_to_mul_));
-
-      const __m128i error_ = _mm_mullo_epi32(diff_sq_, col_error_mul_);
-      const __m128i error_13_24_ = _mm_add_epi32(error_, _mm_srli_si128(error_, sizeof(uint32_t) * 2));
-      const __m128i error_1234_ = _mm_add_epi32(error_13_24_, _mm_srli_si128(error_, sizeof(uint32_t)));
-
-      block_error_ = _mm_add_epi32(block_error_, error_1234_);
-
-      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if constexpr (limg_DiagnoseCulprits)
       {
-        if constexpr (limg_DiagnoseCulprits)
-        {
-          pCtx->culprits++;
-          pCtx->culpritWasPixelBitCrushError++;
-        }
-
-        return false;
+        pCtx->culprits++;
+        pCtx->culpritWasPixelBitCrushError++;
       }
+
+      return false;
     }
   }
 
   const size_t blockError = (size_t)_mm_extract_epi32(block_error_, 0);
 
-  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
+  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * size);
 
   if constexpr (limg_DiagnoseCulprits)
   {
@@ -460,7 +452,7 @@ LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_3_sse41(limg_encode_context 
 #ifndef _MSC_VER
 __attribute__((target("sse4.1")))
 #endif
-LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_context *pCtx, const size_t offsetX, const size_t offsetY, const size_t rangeX, const size_t rangeY, const limg_encode_3d_output<4> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
+LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<4> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
 {
   constexpr size_t channels = 4;
 
@@ -530,67 +522,59 @@ LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_4_sse41(limg_encode_context 
 
   __m128i block_error_ = _mm_setzero_si128();
 
-  const uint32_t *pStart = reinterpret_cast<const uint32_t *>(pCtx->pSourceImage + offsetX + offsetY * pCtx->sizeX);
-
-  for (size_t y = 0; y < rangeY; y++)
+  for (size_t i = 0; i < size; i++)
   {
-    const uint32_t *pLine = pStart + pCtx->sizeX * y;
+    const uint32_t px = pPixels[i];
+    
+    const __m128i px_ = _mm_cvtepu8_epi32(_mm_set1_epi32(px));
 
-    for (size_t x = 0; x < rangeX; x++)
+    const uint8_t fA = *pA;
+    const uint8_t fB = *pB;
+    const uint8_t fC = *pC;
+
+    pA++;
+    pB++;
+    pC++;
+
+    const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
+    const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
+    const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
+    const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
+    const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
+
+    const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
+    const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
+    const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
+    const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
+
+    const __m128i diff_ = _mm_sub_epi32(px_, dec_);
+    const __m128i diff_sq_ = _mm_mullo_epi32(diff_, diff_);
+
+    const __m128i diff_sq_red_ = _mm_shuffle_epi32(diff_sq_, _MM_SHUFFLE(0, 0, 0, 0));
+    const __m128i cmp_red_thresh_ = _mm_or_si128(index13_, _mm_cmplt_epi32(diff_sq_red_, redThreshold_));
+    const __m128i col_error_mul_ = _mm_or_si128(_mm_and_si128(cmp_red_thresh_, low_red_error_cmp_flag_to_mul_), _mm_andnot_si128(cmp_red_thresh_, high_red_error_cmp_flag_to_mul_));
+
+    const __m128i error_ = _mm_mullo_epi32(diff_sq_, col_error_mul_);
+    const __m128i error_13_24_ = _mm_add_epi32(error_, _mm_srli_si128(error_, sizeof(uint32_t) * 2));
+    const __m128i error_1234_ = _mm_add_epi32(error_13_24_, _mm_srli_si128(error_, sizeof(uint32_t)));
+
+    block_error_ = _mm_add_epi32(block_error_, error_1234_);
+
+    if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
     {
-      const uint32_t px = *pLine;
-      pLine++;
-
-      const __m128i px_ = _mm_cvtepu8_epi32(_mm_set1_epi32(px));
-
-      const uint8_t fA = *pA;
-      const uint8_t fB = *pB;
-      const uint8_t fC = *pC;
-
-      pA++;
-      pB++;
-      pC++;
-
-      const __m128i encoded_ = _mm_set_epi32(0, fC >> shift[2], fB >> shift[1], fA >> shift[0]);  // this could be `_mm_srlv_epi32` with AVX2.
-      const __m128i decoded_ = _mm_mullo_epi32(encoded_, decode_bias_);
-      const __m128i decoded_0 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i decoded_1 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(1, 1, 1, 1));
-      const __m128i decoded_2 = _mm_shuffle_epi32(decoded_, _MM_SHUFFLE(2, 2, 2, 2));
-
-      const __m128i estCol_0 = _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_0, normalA_), minA_), 8);
-      const __m128i estCol_1 = _mm_add_epi32(estCol_0, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_1, normalB_), minB_), 8));
-      const __m128i estCol_2 = _mm_add_epi32(estCol_1, _mm_srai_epi32(_mm_add_epi32(_mm_mullo_epi32(decoded_2, normalC_), minC_), 8));
-      const __m128i dec_ = _mm_min_epi32(hexFF_, _mm_max_epi32(_mm_setzero_si128(), estCol_2)); // ensure in range [0, 0xFF].
-
-      const __m128i diff_ = _mm_sub_epi32(px_, dec_);
-      const __m128i diff_sq_ = _mm_mullo_epi32(diff_, diff_);
-
-      const __m128i diff_sq_red_ = _mm_shuffle_epi32(diff_sq_, _MM_SHUFFLE(0, 0, 0, 0));
-      const __m128i cmp_red_thresh_ = _mm_or_si128(index13_, _mm_cmplt_epi32(diff_sq_red_, redThreshold_));
-      const __m128i col_error_mul_ = _mm_or_si128(_mm_and_si128(cmp_red_thresh_, low_red_error_cmp_flag_to_mul_), _mm_andnot_si128(cmp_red_thresh_, high_red_error_cmp_flag_to_mul_));
-
-      const __m128i error_ = _mm_mullo_epi32(diff_sq_, col_error_mul_);
-      const __m128i error_13_24_ = _mm_add_epi32(error_, _mm_srli_si128(error_, sizeof(uint32_t) * 2));
-      const __m128i error_1234_ = _mm_add_epi32(error_13_24_, _mm_srli_si128(error_, sizeof(uint32_t)));
-
-      block_error_ = _mm_add_epi32(block_error_, error_1234_);
-
-      if ((size_t)_mm_extract_epi32(error_1234_, 0) > pCtx->maxPixelBitCrushError)
+      if constexpr (limg_DiagnoseCulprits)
       {
-        if constexpr (limg_DiagnoseCulprits)
-        {
-          pCtx->culprits++;
-          pCtx->culpritWasPixelBitCrushError++;
-        }
-
-        return false;
+        pCtx->culprits++;
+        pCtx->culpritWasPixelBitCrushError++;
       }
+
+      return false;
     }
   }
 
   const size_t blockError = (size_t)_mm_extract_epi32(block_error_, 0);
 
-  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * (rangeX * rangeY));
+  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * size);
 
   if constexpr (limg_DiagnoseCulprits)
   {
