@@ -1059,11 +1059,13 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
 
       if (pCtx->crushBits)
       {
+        size_t minBlockError = (size_t)-1;
+
         // Try best guesses.
         if (pCtx->guessCrush)
-          limg_encode_guess_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift);
+          limg_encode_guess_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, &minBlockError);
 
-        limg_encode_find_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift);
+        limg_encode_find_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, minBlockError);
 
         if (shift[0] || shift[1] || shift[2])
         {

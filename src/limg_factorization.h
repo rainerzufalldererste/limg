@@ -289,11 +289,11 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3
 
     // diff_xi_dirC = diff_xi_dirA x diff_xi_dirB
     {
-      const __m128 shufA = _mm_permute_ps(diff_xi_dirA_, _MM_SHUFFLE(3, 0, 2, 1));
-      const __m128 shufB = _mm_permute_ps(diff_xi_dirB_, _MM_SHUFFLE(3, 1, 0, 2));
+      const __m128 shufA = _mm_shuffle_ps(diff_xi_dirA_, diff_xi_dirA_, _MM_SHUFFLE(3, 0, 2, 1));
+      const __m128 shufB = _mm_shuffle_ps(diff_xi_dirB_, diff_xi_dirB_, _MM_SHUFFLE(3, 1, 0, 2));
       const __m128 mul0 = _mm_mul_ps(shufA, shufB);
-      const __m128 shufA1 = _mm_permute_ps(shufA, _MM_SHUFFLE(3, 0, 2, 1));
-      const __m128 shufB1 = _mm_permute_ps(shufB, _MM_SHUFFLE(3, 1, 0, 2));
+      const __m128 shufA1 = _mm_shuffle_ps(shufA, shufA, _MM_SHUFFLE(3, 0, 2, 1));
+      const __m128 shufB1 = _mm_shuffle_ps(shufB, shufB, _MM_SHUFFLE(3, 1, 0, 2));
 
       diff_xi_dirC_ = _mm_sub_ps(mul0, _mm_mul_ps(shufA1, shufB1));
     }
@@ -569,12 +569,20 @@ LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_4
 
   _mm_storeu_ps(out.avg, avg_);
 
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
   *reinterpret_cast<uint64_t *>(out.dirA_min) = _mm_extract_epi64(dirAmin, 0);
   *reinterpret_cast<uint64_t *>(out.dirA_max) = _mm_extract_epi64(dirAmax, 0);
   *reinterpret_cast<uint64_t *>(out.dirB_offset) = _mm_extract_epi64(dirBmin, 0);
   *reinterpret_cast<uint64_t *>(out.dirB_mag) = _mm_extract_epi64(dirBmax, 0);
   *reinterpret_cast<uint64_t *>(out.dirC_offset) = _mm_extract_epi64(dirCmin, 0);
   *reinterpret_cast<uint64_t *>(out.dirC_mag) = _mm_extract_epi64(dirCmax, 0);
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 }
 
 LIMG_DEBUG_NO_INLINE void limg_encode_get_block_factors_accurate_from_state_3d_3(limg_encode_context *, const uint32_t *pPixels, const size_t size, limg_encode_3d_output<3> &out, limg_encode_decomposition_state &state, float *pScratch)

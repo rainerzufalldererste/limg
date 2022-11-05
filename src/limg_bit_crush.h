@@ -227,19 +227,19 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *
 }
 
 template <size_t channels>
-static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
+static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3], size_t *pMinBlockError)
 {
-  size_t max_shift = 0;
+  size_t blockError;
+  //size_t max_shift = 0;
   size_t min_block_error = (size_t)-1;
   uint8_t shift_try[3] = { 4, 5, 6 };
-  size_t blockError;
 
   if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
   {
     for (size_t i = 0; i < 3; i++)
       shift[i] = shift_try[i];
 
-    max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+    //max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
     min_block_error = blockError;
 
     shift_try[0] = 5;
@@ -251,7 +251,7 @@ static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context
       for (size_t i = 0; i < 3; i++)
         shift[i] = shift_try[i];
 
-      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+      //max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
       min_block_error = blockError;
     }
     else
@@ -265,7 +265,7 @@ static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context
         for (size_t i = 0; i < 3; i++)
           shift[i] = shift_try[i];
 
-        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+        //max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
         min_block_error = blockError;
       }
     }
@@ -281,17 +281,19 @@ static LIMG_INLINE void limg_encode_guess_shift_for_block_3d(limg_encode_context
       for (size_t i = 0; i < 3; i++)
         shift[i] = shift_try[i];
 
-      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+      //max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
       min_block_error = blockError;
     }
   }
+
+  *pMinBlockError = min_block_error;
 }
 
 template <size_t channels>
-static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
+static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3], const size_t minBlockError)
 {
   size_t max_shift = shift[0] + shift[1] + shift[2];
-  size_t min_block_error = (size_t)-1;
+  size_t min_block_error = minBlockError;
   uint8_t shift_try[3];
   size_t blockError;
 
