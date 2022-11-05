@@ -397,4 +397,170 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
   }
 }
 
+template <size_t channels>
+static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3], const size_t minBlockError)
+{
+  uint8_t max_shift = shift[0] + shift[1] + shift[2];
+  size_t min_block_error = minBlockError;
+  uint8_t shift_try[3];
+  size_t blockError;
+
+  // Coarse Pass. Only replace with *more* max shift.
+  {
+    uint8_t a = 0;
+    uint8_t b = 0;
+    uint8_t c = 2; // to get rid of the check for 0, 0, 0.
+
+    for (; a <= 8; a += 2)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b += 2)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c += 2)
+        {
+          if (a + b + c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
+            {
+              for (size_t i = 0; i < 3; i++)
+                shift[i] = shift_try[i];
+
+              max_shift = (size_t)a + (size_t)b + (size_t)c;
+              min_block_error = blockError;
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+
+  // Fine Pass. Still Only replace with *more* max shift.
+  {
+    const uint8_t pre_a = (uint8_t)shift[0];
+    const uint8_t pre_b = (uint8_t)shift[1];
+    const uint8_t pre_c = (uint8_t)shift[2];
+    const size_t max_a = !(pre_a & 1) && pre_a != 8;
+    const size_t max_b = !(pre_b & 1) && pre_b != 8;
+    const size_t max_c = !(pre_c & 1) && pre_c != 8;
+    uint8_t fine_shift = 0;
+
+    uint8_t a = 0;
+    uint8_t b = 0;
+    uint8_t c = 1; // to get rid of the check for 0, 0, 0.
+
+    for (; a <= max_a; a++)
+    {
+      shift_try[0] = pre_a + a;
+
+      for (; b <= max_b; b++)
+      {
+        shift_try[1] = pre_b + b;
+
+        for (; c <= max_c; c++)
+        {
+          if (a + b + c > fine_shift)
+          {
+            shift_try[2] = pre_c + c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
+            {
+              max_shift = 0;
+
+              for (size_t i = 0; i < 3; i++)
+                max_shift += (shift[i] = shift_try[i]);
+
+              fine_shift = a + b + c;
+              min_block_error = blockError;
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+
+  // (Potentially) check other max shifts.
+  if (max_shift > 0 && !pCtx->fastBitCrush)
+  {
+    uint8_t a = shift[0];
+    uint8_t b = shift[1];
+    uint8_t c = shift[2] + 1;
+
+    for (; a <= 8; a++)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b++)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c++)
+        {
+          if (a + b + c == max_shift)
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
+            {
+              if (min_block_error > blockError)
+              {
+                for (size_t i = 0; i < 3; i++)
+                  shift[i] = shift_try[i];
+
+                min_block_error = blockError;
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+}
+
 #endif // limg_bit_crush_h__

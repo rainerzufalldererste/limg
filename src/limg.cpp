@@ -1065,7 +1065,10 @@ void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, u
         if (pCtx->guessCrush)
           limg_encode_guess_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, &minBlockError);
 
-        limg_encode_find_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, minBlockError);
+        if (pCtx->coarseFineBitCrush)
+          limg_encode_find_shift_for_block_stepwise_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, minBlockError);
+        else
+          limg_encode_find_shift_for_block_3d<channels>(pCtx, pixels, rangeSize, decomposition, pAu8, pBu8, pCu8, shift, minBlockError);
 
         if (shift[0] || shift[1] || shift[2])
         {
@@ -1316,6 +1319,7 @@ limg_result limg_encode3d_test(const uint32_t *pIn, const size_t sizeX, const si
   ctx.fastBitCrush = fastBitCrushing;
   ctx.guessCrush = true;
   ctx.crushBits = errorFactor != 0;
+  ctx.coarseFineBitCrush = fastBitCrushing;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {
@@ -1406,6 +1410,7 @@ limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, con
   ctx.fastBitCrush = fastBitCrushing;
   ctx.guessCrush = true;
   ctx.crushBits = errorFactor != 0;
+  ctx.coarseFineBitCrush = fastBitCrushing;
 
   if constexpr (limg_LuminanceDependentPixelError)
   {

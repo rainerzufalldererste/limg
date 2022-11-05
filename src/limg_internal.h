@@ -146,7 +146,7 @@ constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
-constexpr bool limg_DiagnoseCulprits = true;
+constexpr bool limg_DiagnoseCulprits = false;
 
 struct limg_encode_context
 {
@@ -159,7 +159,7 @@ struct limg_encode_context
     maxBlockExpandError, // maximum error of linear factor deviation when trying to expand the factors of a block in order to expand the block.
     maxPixelBitCrushError, // maximum error of a single pixel when trying to bit crush blocks.
     maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks. (accum_err * 0xFF / (rangeX * rangeY))
-  bool hasAlpha, ditheringEnabled, fastBitCrush, guessCrush, crushBits;
+  bool hasAlpha, ditheringEnabled, fastBitCrush, guessCrush, crushBits, coarseFineBitCrush;
 
   size_t culprits,
     culpritWasPixelBlockError,
