@@ -407,9 +407,9 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode
 
   // Coarse Pass. Only replace with *more* max shift.
   {
-    uint8_t a = 0;
-    uint8_t b = 0;
-    uint8_t c = 2; // to get rid of the check for 0, 0, 0.
+    uint8_t a = shift[0] & 0b1111;
+    uint8_t b = shift[1] & 0b1111;
+    uint8_t c = (shift[2] & 0b1111) + 2; // to get rid of the potential check for 0, 0, 0.
 
     for (; a <= 8; a += 2)
     {
@@ -421,7 +421,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode
 
         for (; c <= 8; c += 2)
         {
-          if (a + b + c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
+          if (a + b + c > max_shift)
           {
             shift_try[2] = c;
 
@@ -440,16 +440,16 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode
           }
         }
 
-        if (c == 0)
+        if (c == b)
           break;
 
-        c = 0;
+        c = b;
       }
 
-      if (b == 0)
+      if (b == a)
         break;
 
-      b = 0;
+      b = a;
     }
   }
 
