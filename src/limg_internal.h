@@ -159,7 +159,7 @@ struct limg_encode_context
     maxBlockExpandError, // maximum error of linear factor deviation when trying to expand the factors of a block in order to expand the block.
     maxPixelBitCrushError, // maximum error of a single pixel when trying to bit crush blocks.
     maxBlockBitCrushError; // maximum average error of pixels per block when trying to bit crush blocks. (accum_err * 0xFF / (rangeX * rangeY))
-  bool hasAlpha, ditheringEnabled, fastBitCrush, guessCrush, crushBits, coarseFineBitCrush;
+  bool hasAlpha, ditheringEnabled, fastBitCrush, guessCrush, crushBits, coarseFineBitCrush, errorPixelRetainingBitCrush;
 
   size_t culprits,
     culpritWasPixelBlockError,

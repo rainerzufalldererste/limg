@@ -93,8 +93,8 @@ static LIMG_INLINE uint8_t limg_encode_find_shift_for_block(limg_encode_context 
   return shift;
 }
 
-template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
+template <size_t channels, bool extractPixel, bool checkBlockError>
+static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError, size_t *pPixelIndex)
 {
   int32_t normalA[channels];
   int32_t normalB[channels];
@@ -147,82 +147,184 @@ static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d_(limg_encode_context 
   const limg_ui8_4 *pStart = reinterpret_cast<const limg_ui8_4 *>(pPixels);
   size_t blockError = 0;
 
-  for (size_t i = 0; i < size; i++)
+  if constexpr (extractPixel)
   {
-    const limg_ui8_4 px = *pStart;
-    pStart++;
+    const size_t pixelIndex = *pPixelIndex;
 
-    const uint8_t fA = *pA;
-    const uint8_t fB = *pB;
-    const uint8_t fC = *pC;
-
-    pA++;
-    pB++;
-    pC++;
-
-    limg_ui8_4 dec;
-
-    const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
-    uint8_t decoded[3];
-
-    for (size_t j = 0; j < 3; j++)
-      decoded[j] = (encoded[j] << shift[j]) + (encoded[j] * decode_bias[j]);
-
-    for (size_t j = 0; j < channels; j++)
+    // pixelIndex -> size - 1.
+    for (size_t i = pixelIndex; i < size; i++)
     {
-      int32_t estCol;
-      estCol = (int32_t)(minA[j] + ((decoded[0] * normalA[j] + (int32_t)bias) >> 8));
-      estCol += (int32_t)(minB[j] + ((decoded[1] * normalB[j] + (int32_t)bias) >> 8));
-      estCol += (int32_t)(minC[j] + ((decoded[2] * normalC[j] + (int32_t)bias) >> 8));
+      const limg_ui8_4 px = *pStart;
+      pStart++;
 
-      dec[j] = (uint8_t)limgClamp(estCol, 0, 0xFF);
-    }
+      const uint8_t fA = pA[i];
+      const uint8_t fB = pB[i];
+      const uint8_t fC = pC[i];
 
-    const size_t error = limg_color_error<channels>(dec, px);
+      limg_ui8_4 dec;
 
-    if (error > pCtx->maxPixelBitCrushError)
-    {
-      if constexpr (limg_DiagnoseCulprits)
+      const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
+      uint8_t decoded[3];
+
+      for (size_t j = 0; j < 3; j++)
+        decoded[j] = (encoded[j] << shift[j]) + (encoded[j] * decode_bias[j]);
+
+      for (size_t j = 0; j < channels; j++)
       {
-        pCtx->culprits++;
-        pCtx->culpritWasPixelBitCrushError++;
+        int32_t estCol;
+        estCol = (int32_t)(minA[j] + ((decoded[0] * normalA[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minB[j] + ((decoded[1] * normalB[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minC[j] + ((decoded[2] * normalC[j] + (int32_t)bias) >> 8));
+
+        dec[j] = (uint8_t)limgClamp(estCol, 0, 0xFF);
       }
 
-      return false;
+      const size_t error = limg_color_error<channels>(dec, px);
+
+      if (error > pCtx->maxPixelBitCrushError)
+      {
+        if constexpr (limg_DiagnoseCulprits)
+        {
+          pCtx->culprits++;
+          pCtx->culpritWasPixelBitCrushError++;
+        }
+        
+        *pPixelIndex = i;
+
+        return false;
+      }
+
+      blockError += error;
     }
 
-    blockError += error;
-  }
-
-  const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * size);
-
-  if constexpr (limg_DiagnoseCulprits)
-  {
-    if (!ret)
+    // 0 -> pixelIndex - 1.
+    for (size_t i = 0; i < pixelIndex; i++)
     {
-      pCtx->culprits++;
-      pCtx->culpritWasBlockBitCrushError++;
+      const limg_ui8_4 px = *pStart;
+      pStart++;
+
+      const uint8_t fA = pA[i];
+      const uint8_t fB = pB[i];
+      const uint8_t fC = pC[i];
+
+      limg_ui8_4 dec;
+
+      const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
+      uint8_t decoded[3];
+
+      for (size_t j = 0; j < 3; j++)
+        decoded[j] = (encoded[j] << shift[j]) + (encoded[j] * decode_bias[j]);
+
+      for (size_t j = 0; j < channels; j++)
+      {
+        int32_t estCol;
+        estCol = (int32_t)(minA[j] + ((decoded[0] * normalA[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minB[j] + ((decoded[1] * normalB[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minC[j] + ((decoded[2] * normalC[j] + (int32_t)bias) >> 8));
+
+        dec[j] = (uint8_t)limgClamp(estCol, 0, 0xFF);
+      }
+
+      const size_t error = limg_color_error<channels>(dec, px);
+
+      if (error > pCtx->maxPixelBitCrushError)
+      {
+        if constexpr (limg_DiagnoseCulprits)
+        {
+          pCtx->culprits++;
+          pCtx->culpritWasPixelBitCrushError++;
+        }
+        
+        *pPixelIndex = i;
+
+        return false;
+      }
+
+      blockError += error;
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < size; i++)
+    {
+      const limg_ui8_4 px = *pStart;
+      pStart++;
+
+      const uint8_t fA = pA[i];
+      const uint8_t fB = pB[i];
+      const uint8_t fC = pC[i];
+
+      limg_ui8_4 dec;
+
+      const uint8_t encoded[3] = { (uint8_t)(fA >> shift[0]), (uint8_t)(fB >> shift[1]), (uint8_t)(fC >> shift[2]) };
+      uint8_t decoded[3];
+
+      for (size_t j = 0; j < 3; j++)
+        decoded[j] = (encoded[j] << shift[j]) + (encoded[j] * decode_bias[j]);
+
+      for (size_t j = 0; j < channels; j++)
+      {
+        int32_t estCol;
+        estCol = (int32_t)(minA[j] + ((decoded[0] * normalA[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minB[j] + ((decoded[1] * normalB[j] + (int32_t)bias) >> 8));
+        estCol += (int32_t)(minC[j] + ((decoded[2] * normalC[j] + (int32_t)bias) >> 8));
+
+        dec[j] = (uint8_t)limgClamp(estCol, 0, 0xFF);
+      }
+
+      const size_t error = limg_color_error<channels>(dec, px);
+
+      if (error > pCtx->maxPixelBitCrushError)
+      {
+        if constexpr (limg_DiagnoseCulprits)
+        {
+          pCtx->culprits++;
+          pCtx->culpritWasPixelBitCrushError++;
+        }
+
+        return false;
+      }
+
+      blockError += error;
     }
   }
 
   *pBlockError = blockError;
 
-  return ret;
+  if constexpr (checkBlockError)
+  {
+    const bool ret = ((blockError * 0x10) < pCtx->maxBlockBitCrushError * size);
+
+    if constexpr (limg_DiagnoseCulprits)
+    {
+      if (!ret)
+      {
+        pCtx->culprits++;
+        pCtx->culpritWasBlockBitCrushError++;
+      }
+    }
+
+    return ret;
+  }
+  else
+  {
+    return true;
+  }
 }
 
-template <size_t channels>
-static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError)
+template <size_t channels, bool extractPixel = false, bool checkBlockError = true>
+static LIMG_INLINE bool limg_encode_try_bit_crush_block_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &in, const uint8_t *pA, const uint8_t *pB, const uint8_t *pC, const uint8_t shift[3], size_t *pBlockError, size_t *pPixelIndex = nullptr)
 {
   if (sse41Supported)
   {
     if constexpr (channels == 4)
-      return limg_encode_try_bit_crush_block_3d_4_sse41(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError);
+      return limg_encode_try_bit_crush_block_3d_4_sse41<extractPixel, checkBlockError>(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError, pPixelIndex);
     else
-      return limg_encode_try_bit_crush_block_3d_3_sse41(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError);
+      return limg_encode_try_bit_crush_block_3d_3_sse41<extractPixel, checkBlockError>(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError, pPixelIndex);
   }
   else
   {
-    return limg_encode_try_bit_crush_block_3d_<channels>(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError);
+    return limg_encode_try_bit_crush_block_3d_<channels, extractPixel, checkBlockError>(pCtx, pPixels, size, in, pA, pB, pC, shift, pBlockError, pPixelIndex);
   }
 }
 
@@ -313,7 +415,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
         for (; c <= 8; c++)
         {
-          if ((size_t)a + (size_t)b + (size_t)c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
+          if (a + b + c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
           {
             shift_try[2] = c;
 
@@ -322,7 +424,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
               for (size_t i = 0; i < 3; i++)
                 shift[i] = shift_try[i];
 
-              max_shift = (size_t)a + (size_t)b + (size_t)c;
+              max_shift = a + b + c;
               min_block_error = blockError;
             }
             else
@@ -362,7 +464,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_3d(limg_encode_context 
 
         for (; c <= 8; c++)
         {
-          if ((size_t)a + (size_t)b + (size_t)c == max_shift)
+          if (a + b + c == max_shift)
           {
             shift_try[2] = c;
 
@@ -430,7 +532,7 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode
               for (size_t i = 0; i < 3; i++)
                 shift[i] = shift_try[i];
 
-              max_shift = (size_t)a + (size_t)b + (size_t)c;
+              max_shift = a + b + c;
               min_block_error = blockError;
             }
             else
@@ -533,6 +635,391 @@ static LIMG_INLINE void limg_encode_find_shift_for_block_stepwise_3d(limg_encode
             shift_try[2] = c;
 
             if (limg_encode_try_bit_crush_block_3d<channels>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError))
+            {
+              if (min_block_error > blockError)
+              {
+                for (size_t i = 0; i < 3; i++)
+                  shift[i] = shift_try[i];
+
+                min_block_error = blockError;
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+}
+
+template <size_t channels>
+static LIMG_INLINE void limg_encode_find_shift_for_block_error_pixel_preference_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
+{
+  size_t max_shift = 0;
+  size_t min_block_error = (size_t)-1;
+  size_t blockError;
+  uint8_t shift_try[3] = { 4, 5, 6 };
+  size_t errorPixel = 0;
+
+  if (pCtx->guessCrush)
+  {
+    if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+    {
+      for (size_t i = 0; i < 3; i++)
+        shift[i] = shift_try[i];
+
+      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+      min_block_error = blockError;
+
+      shift_try[0] = 5;
+      shift_try[1] = 8;
+      shift_try[2] = 8;
+
+      if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+      {
+        for (size_t i = 0; i < 3; i++)
+          shift[i] = shift_try[i];
+
+        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+        min_block_error = blockError;
+      }
+      else
+      {
+        shift_try[0] = 4;
+        shift_try[1] = 6;
+        shift_try[2] = 8;
+
+        if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+        {
+          for (size_t i = 0; i < 3; i++)
+            shift[i] = shift_try[i];
+
+          max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+          min_block_error = blockError;
+        }
+      }
+    }
+    else
+    {
+      shift_try[0] = 2;
+      shift_try[1] = 4;
+      shift_try[2] = 5;
+
+      if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+      {
+        for (size_t i = 0; i < 3; i++)
+          shift[i] = shift_try[i];
+
+        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+        min_block_error = blockError;
+      }
+    }
+  }
+
+  // Only replace with *more* max shift.
+  {
+    uint8_t a = 0;
+    uint8_t b = 0;
+    uint8_t c = 1; // to get rid of the check for 0, 0, 0.
+
+    for (; a <= 8; a++)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b++)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c++)
+        {
+          if (a + b + c > max_shift && (a != shift[0] || b != shift[1] || c != shift[2]))
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+            {
+              for (size_t i = 0; i < 3; i++)
+                shift[i] = shift_try[i];
+
+              max_shift = a + b + c;
+              min_block_error = blockError;
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+
+  // (Potentially) check other max shifts.
+  if (max_shift > 0 && !pCtx->fastBitCrush)
+  {
+    uint8_t a = shift[0];
+    uint8_t b = shift[1];
+    uint8_t c = shift[2] + 1;
+
+    for (; a <= 8; a++)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b++)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c++)
+        {
+          if (a + b + c == max_shift)
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+            {
+              if (min_block_error > blockError)
+              {
+                for (size_t i = 0; i < 3; i++)
+                  shift[i] = shift_try[i];
+
+                min_block_error = blockError;
+              }
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+}
+
+template <size_t channels>
+static LIMG_INLINE void limg_encode_find_shift_for_block_error_pixel_preference_stepwise_3d(limg_encode_context *pCtx, const uint32_t *pPixels, const size_t size, const limg_encode_3d_output<channels> &decomposition, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8, uint8_t shift[3])
+{
+  size_t max_shift = 0;
+  size_t min_block_error = (size_t)-1;
+  size_t blockError;
+  uint8_t shift_try[3] = { 4, 5, 6 };
+  size_t errorPixel = 0;
+
+  if (pCtx->guessCrush)
+  {
+    if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+    {
+      for (size_t i = 0; i < 3; i++)
+        shift[i] = shift_try[i];
+
+      max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+      min_block_error = blockError;
+
+      shift_try[0] = 5;
+      shift_try[1] = 8;
+      shift_try[2] = 8;
+
+      if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+      {
+        for (size_t i = 0; i < 3; i++)
+          shift[i] = shift_try[i];
+
+        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+        min_block_error = blockError;
+      }
+      else
+      {
+        shift_try[0] = 4;
+        shift_try[1] = 6;
+        shift_try[2] = 8;
+
+        if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+        {
+          for (size_t i = 0; i < 3; i++)
+            shift[i] = shift_try[i];
+
+          max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+          min_block_error = blockError;
+        }
+      }
+    }
+    else
+    {
+      shift_try[0] = 2;
+      shift_try[1] = 4;
+      shift_try[2] = 5;
+
+      if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+      {
+        for (size_t i = 0; i < 3; i++)
+          shift[i] = shift_try[i];
+
+        max_shift = (size_t)shift_try[0] + (size_t)shift_try[1] + (size_t)shift_try[2];
+        min_block_error = blockError;
+      }
+    }
+  }
+  // Coarse Pass. Only replace with *more* max shift.
+  {
+    uint8_t a = shift[0] & 0b1111;
+    uint8_t b = shift[1] & 0b1111;
+    uint8_t c = (shift[2] & 0b1111) + 2; // to get rid of the potential check for 0, 0, 0.
+
+    for (; a <= 8; a += 2)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b += 2)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c += 2)
+        {
+          if (a + b + c > max_shift)
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+            {
+              for (size_t i = 0; i < 3; i++)
+                shift[i] = shift_try[i];
+
+              max_shift = a + b + c;
+              min_block_error = blockError;
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == b)
+          break;
+
+        c = b;
+      }
+
+      if (b == a)
+        break;
+
+      b = a;
+    }
+  }
+
+  // Fine Pass. Still Only replace with *more* max shift.
+  {
+    const uint8_t pre_a = (uint8_t)shift[0];
+    const uint8_t pre_b = (uint8_t)shift[1];
+    const uint8_t pre_c = (uint8_t)shift[2];
+    const size_t max_a = !(pre_a & 1) && pre_a != 8;
+    const size_t max_b = !(pre_b & 1) && pre_b != 8;
+    const size_t max_c = !(pre_c & 1) && pre_c != 8;
+    uint8_t fine_shift = 0;
+
+    uint8_t a = 0;
+    uint8_t b = 0;
+    uint8_t c = 1; // to get rid of the check for 0, 0, 0.
+
+    for (; a <= max_a; a++)
+    {
+      shift_try[0] = pre_a + a;
+
+      for (; b <= max_b; b++)
+      {
+        shift_try[1] = pre_b + b;
+
+        for (; c <= max_c; c++)
+        {
+          if (a + b + c > fine_shift)
+          {
+            shift_try[2] = pre_c + c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
+            {
+              max_shift = 0;
+
+              for (size_t i = 0; i < 3; i++)
+                max_shift += (shift[i] = shift_try[i]);
+
+              fine_shift = a + b + c;
+              min_block_error = blockError;
+            }
+            else
+            {
+              break;
+            }
+          }
+        }
+
+        if (c == 0)
+          break;
+
+        c = 0;
+      }
+
+      if (b == 0)
+        break;
+
+      b = 0;
+    }
+  }
+
+  // (Potentially) check other max shifts.
+  if (max_shift > 0 && !pCtx->fastBitCrush)
+  {
+    uint8_t a = shift[0];
+    uint8_t b = shift[1];
+    uint8_t c = shift[2] + 1;
+
+    for (; a <= 8; a++)
+    {
+      shift_try[0] = a;
+
+      for (; b <= 8; b++)
+      {
+        shift_try[1] = b;
+
+        for (; c <= 8; c++)
+        {
+          if (a + b + c == max_shift)
+          {
+            shift_try[2] = c;
+
+            if (limg_encode_try_bit_crush_block_3d<channels, true, true>(pCtx, pPixels, size, decomposition, pAu8, pBu8, pCu8, shift_try, &blockError, &errorPixel))
             {
               if (min_block_error > blockError)
               {
