@@ -796,7 +796,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block(limg_encode_context *pCtx, size
 }
 
 // returns new `ditherHash`.
-LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
+LIMG_INLINE static uint64_t limg_encode_dither_(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
 {
   if (shift > 7)
     return ditherHash;
@@ -819,6 +819,71 @@ LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t
   }
 
   return ditherHash;
+}
+
+LIMG_INLINE static uint64_t limg_encode_dither_aes_sse41(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
+{
+  if (shift > 7)
+    return ditherHash;
+
+  uint64_t ditherHashes[2] = { ditherHash, ~ditherHash };
+
+  const uint16_t ditherSize = (1 << shift) - 1;
+  const int16_t ditherOffset = 1 << (shift - 1);
+
+  const __m128i ditherSize_ = _mm_set1_epi16((int16_t)ditherSize);
+  const __m128i ditherOffset_ = _mm_set1_epi16(ditherOffset);
+  __m128i state = _mm_loadu_si128(reinterpret_cast<__m128i *>(ditherHashes));
+  const __m128i state2 = _mm_set_epi64x(0x2A76E98006CB4CADLL, 0x824A73EAAB705E1DLL);
+  const __m128i FFhex_ = _mm_set1_epi16(0xFF);
+  const __m128i shuffle16to8 = _mm_set_epi8(-1, -1, -1, -1, -1, -1, -1, -1, 14, 12, 10, 8, 6, 4, 2, 0);
+
+  constexpr size_t blockSize = sizeof(__m128i) / sizeof(int16_t);
+
+  size_t i = 0;
+
+  if (rangeSize >= blockSize)
+  {
+    const size_t rangeSize128 = rangeSize - blockSize + 1;
+
+    for (; i < rangeSize128; i += blockSize)
+    {
+      const __m128i val = _mm_cvtepu8_epi16(_mm_loadu_si128(reinterpret_cast<__m128i *>(&pFactorsU8[i])));
+
+      state = _mm_aesdec_si128(state, state2);
+
+      const __m128i dith = _mm_sub_epi16(_mm_and_si128(state, ditherSize_), ditherOffset_);
+      const __m128i out = _mm_shuffle_epi8(_mm_srli_epi16(_mm_max_epi16(_mm_setzero_si128(), _mm_min_epi16(FFhex_, _mm_add_epi16(dith, val))), shift), shuffle16to8);
+
+      *reinterpret_cast<uint64_t *>(&pFactorsU8[i]) = _mm_extract_epi64(out, 0);
+    }
+
+    _mm_storeu_si128(reinterpret_cast<__m128i *>(ditherHashes), state);
+  }
+
+  for (; i < rangeSize; i++)
+  {
+    ditherHashes[0] = ditherHashes[0] * 6364136223846793005ULL + 1;
+
+    const uint32_t xorshifted_hi = (uint32_t)(((ditherHashes[0] >> 18) ^ ditherHashes[0]) >> 27);
+    const uint32_t rot_hi = (uint32_t)(ditherHashes[0] >> 59);
+
+    const uint32_t hi = (xorshifted_hi >> rot_hi) | (xorshifted_hi << (uint32_t)((-(int32_t)rot_hi) & 31));
+
+    const int32_t rand = (int32_t)(hi & ditherSize) - ditherOffset;
+
+    pFactorsU8[i] = (uint8_t)limgClamp((int32_t)pFactorsU8[i] + rand, 0, 0xFF) >> shift;
+  }
+
+  return ditherHashes[0];
+}
+
+LIMG_INLINE static uint64_t limg_encode_dither(const uint8_t shift, const size_t rangeSize, uint64_t ditherHash, uint8_t *pFactorsU8)
+{
+  if (sse41Supported && aesNiSupported)
+    return limg_encode_dither_aes_sse41(shift, rangeSize, ditherHash, pFactorsU8);
+  else
+    return limg_encode_dither_(shift, rangeSize, ditherHash, pFactorsU8);
 }
 
 limg_result limg_encode_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint32_t *pA, uint32_t *pB, uint32_t *pBlockIndex, uint8_t *pFactors, uint8_t *pBlockError, uint8_t *pShift, const bool hasAlpha, size_t *pTotalBlockArea, const uint32_t errorFactor)
