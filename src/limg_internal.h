@@ -153,6 +153,8 @@ struct limg_encode_context
   const uint32_t *pSourceImage;
   uint32_t *pBlockInfo;
   size_t sizeX, sizeY;
+  size_t blockX, blockY;
+  void *pBlockColorDecompositions;
   size_t maxPixelBlockError, // maximum error of a single pixel when trying to fit pixels into blocks.
     maxBlockPixelError, // maximum average error of pixels per block when trying to fit them into blocks. (accum_err * 0xFF / (rangeX * rangeY))
     maxPixelChannelBlockError, // maximum error of a single pixel on a single channel when trying to fit pixels into blocks.

@@ -1020,6 +1020,341 @@ epilogue:
   return result;
 }
 
+template <size_t channels>
+void limg_encode3d_blocked_test_y_range(limg_encode_context *pCtx, const size_t y_start, const size_t y_end)
+{
+  float scratchBuffer[limg_MinBlockSize * limg_MinBlockSize * 4];
+  uint32_t pixels[limg_MinBlockSize * limg_MinBlockSize];
+
+  limg_encode_3d_output<channels> *pOut = reinterpret_cast<limg_encode_3d_output<channels> *>(pCtx->pBlockColorDecompositions);
+
+  for (size_t y = y_start; y < y_end; y += limg_MinBlockSize)
+  {
+    for (size_t x = 0; x < pCtx->sizeX; x += limg_MinBlockSize)
+    {
+      const size_t rx = limgMin(pCtx->sizeX - x, limg_MinBlockSize);
+      const size_t ry = limgMin(pCtx->sizeY - y, limg_MinBlockSize);
+
+      const size_t rangeSize = rx * ry;
+
+      for (size_t yy = 0; yy < ry; yy++)
+        memcpy(pixels + yy * rx, pCtx->pSourceImage + (y + yy) * pCtx->sizeX + x, rx * sizeof(uint32_t));
+
+      limg_encode_decomposition_state encode_state;
+      limg_encode_sum_to_decomposition_state<channels>(pCtx, pixels, rangeSize, encode_state);
+
+      limg_encode_3d_output<channels> decomposition;
+      limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, pixels, rangeSize, decomposition, encode_state, scratchBuffer);
+
+      *pOut = decomposition;
+      pOut++;
+    }
+  }
+}
+
+bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, const size_t ox, const size_t oy, const size_t rx, const size_t ry)
+{
+  const uint32_t *pBlockInfoLine = &pCtx->pBlockInfo[oy * pCtx->blockX + ox];
+
+  for (size_t y = 0; y < ry; y++)
+  {
+    for (size_t x = 0; x < rx; x++)
+      if (!!(pBlockInfoLine[x] & BlockInfo_InUse))
+        return false;
+
+    pBlockInfoLine += pCtx->blockX;
+  }
+
+  return true;
+}
+
+template <size_t channels>
+bool LIMG_INLINE limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+{
+  int16_t dirA[channels];
+  int16_t dirB[channels];
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    dirA[i] = result.dirA_max[i] - result.dirA_min[i];
+    dirB[i] = b.dirA_max[i] - b.dirA_min[i];
+  }
+
+  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
+    return false;
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    dirA[i] = result.dirB_mag[i] - result.dirB_offset[i];
+    dirB[i] = b.dirB_mag[i] - b.dirB_offset[i];
+  }
+
+  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
+    return false;
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    dirA[i] = result.dirC_mag[i] - result.dirC_offset[i];
+    dirB[i] = b.dirC_mag[i] - b.dirC_offset[i];
+  }
+
+  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
+    return false;
+
+  return true; // TODO: Tons of work needed here.
+}
+
+template <size_t channels>
+bool LIMG_INLINE limg_encode_3d_check_area(limg_encode_context *pCtx, limg_encode_3d_output<channels> *pDecomp, const size_t ox, const size_t oy, const size_t rx, const size_t ry, limg_encode_3d_output<channels> &out)
+{
+  const limg_encode_3d_output<channels> *pDecompLine = &pDecomp[oy * pCtx->blockX + ox];
+
+  for (size_t y = 0; y < ry; y++)
+  {
+    for (size_t x = 0; x < rx; x++)
+      if (!limg_encode_3d_matches(pCtx, out, pDecompLine[x]))
+        return false;
+
+    pDecompLine += pCtx->blockX;
+  }
+
+  return true;
+}
+
+template <size_t channels>
+bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *pCtx, limg_encode_3d_output<channels> *pDecomp, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, const bool up, const bool down, const bool left, const bool right, limg_encode_3d_output<channels> &out_decomp)
+{
+  size_t ox = *pOffsetX;
+  size_t oy = *pOffsetY;
+  size_t rx = *pRangeX;
+  size_t ry = *pRangeY;
+
+  bool canGrowUp = up;
+  bool canGrowDown = down;
+  bool canGrowLeft = left;
+  bool canGrowRight = right;
+
+  limg_encode_3d_output<channels> decomp = pDecomp[ox + oy * pCtx->blockX];
+
+  while (canGrowUp || canGrowDown || canGrowLeft || canGrowRight)
+  {
+    if (canGrowRight && rx + 1 < pCtx->blockX)
+    {
+      const size_t newRx = rx + 1;
+      limg_encode_3d_output<channels> newDecomp = decomp;
+
+      if (limg_encode_check_block_unused_3d(pCtx, ox + rx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox + rx, oy, newRx - rx, ry, newDecomp))
+      {
+        rx = newRx;
+        decomp = newDecomp;
+      }
+      else
+      {
+        canGrowRight = false;
+      }
+    }
+
+    if (canGrowDown && ry + 1 < pCtx->blockY)
+    {
+      const size_t newRy = ry + 1;
+      limg_encode_3d_output<channels> newDecomp = decomp;
+
+      if (limg_encode_check_block_unused_3d(pCtx, ox, oy + ry, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, oy + ry, rx, newRy - ry, newDecomp))
+      {
+        ry = newRy;
+        decomp = newDecomp;
+      }
+      else
+      {
+        canGrowDown = false;
+      }
+    }
+
+    if (canGrowUp && ry > 0)
+    {
+      const size_t newOy = oy - 1;
+      const size_t newRy = ry + 1;
+      limg_encode_3d_output<channels> newDecomp = decomp;
+
+      if (limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, newDecomp))
+      {
+        oy = newOy;
+        ry = newRy;
+        decomp = newDecomp;
+      }
+      else
+      {
+        canGrowUp = false;
+      }
+    }
+
+    if (canGrowLeft && rx > 0)
+    {
+      const size_t newOx = ox - 1;
+      const size_t newRx = rx + 1;
+      limg_encode_3d_output<channels> newDecomp = decomp;
+
+      if (limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, newDecomp))
+      {
+        ox = newOx;
+        rx = newRx;
+        decomp = newDecomp;
+      }
+      else
+      {
+        canGrowLeft = false;
+      }
+    }
+  }
+
+  *pOffsetX = ox;
+  *pOffsetY = oy;
+  *pRangeX = rx;
+  *pRangeY = ry;
+  out_decomp = decomp;
+
+  return true;
+}
+
+template <size_t channels>
+bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, limg_encode_3d_output<channels> *pDecomp, size_t &staticX, size_t &staticY, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_encode_3d_output<channels> &decomp)
+{
+  size_t ox = staticX;
+  size_t oy = staticY;
+
+  for (; oy < pCtx->blockY; oy++)
+  {
+    const uint32_t *pBlockInfoLine = &pCtx->pBlockInfo[oy * pCtx->blockX];
+
+    for (; ox < pCtx->blockX; ox++)
+    {
+      if (!!(pBlockInfoLine[ox] & BlockInfo_InUse))
+        continue;
+
+      size_t rx = 1;
+      size_t ry = 1;
+
+      *pOffsetX = ox;
+      *pOffsetY = oy;
+      *pRangeX = rx;
+      *pRangeY = ry;
+
+      if (!limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, false, true, false, true, decomp))
+        continue;
+
+      if (rx == 1 && ry == 1)
+        continue;
+
+      rx = *pRangeX;
+      ry = *pRangeY;
+
+      limg_encode_3d_output<channels> sDecomp = decomp;
+
+      if (rx >= 3 && ry >= 3)
+      {
+        *pOffsetX = ox + rx / 2;
+        *pOffsetY = oy + ry / 2;
+        *pRangeX = rx;
+        *pRangeY = ry;
+
+        if (limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp))
+        {
+          staticX = ox;
+          staticY = oy;
+
+          return true;
+        }
+
+        *pOffsetX = ox;
+        *pOffsetY = oy;
+        *pRangeX = rx;
+        *pRangeY = ry;
+
+        staticX = ox + rx;
+        staticY = oy;
+
+        decomp = sDecomp;
+      }
+
+      return true;
+    }
+
+    ox = 0;
+  }
+
+  staticX = ox;
+  staticY = oy;
+
+  return false;
+}
+
+template <size_t channels>
+void limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
+{
+  if (pThreadPool == nullptr)
+  {
+    limg_encode3d_blocked_test_y_range<channels>(pCtx, 0, pCtx->sizeY);
+  }
+  else
+  {
+    size_t thread_count = limg_thread_pool_thread_count(pThreadPool) * 4;
+    size_t y_range = ((pCtx->sizeY / limg_MinBlockSize) / thread_count) * limg_MinBlockSize;
+
+    if (y_range == 0)
+    {
+      thread_count = limg_thread_pool_thread_count(pThreadPool);
+      y_range = ((pCtx->sizeY / limg_MinBlockSize) / thread_count) * limg_MinBlockSize;
+    }
+
+    size_t y_start = 0;
+
+    for (size_t i = 1; i < thread_count; i++)
+    {
+      const size_t start = y_start;
+      const size_t end = y_start + y_range;
+      y_start += y_range;
+
+      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, start, end); });
+    }
+
+    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, y_start, pCtx->sizeY); });
+
+    limg_thread_pool_await(pThreadPool);
+  }
+
+  limg_encode_3d_output<channels> *pDecomposition = reinterpret_cast<limg_encode_3d_output<channels> *>(pCtx->pBlockColorDecompositions);
+
+  // Attempt to Merge Blocks.
+  {
+    size_t blockFindStaticX = 0;
+    size_t blockFindStaticY = 0;
+
+    while (true)
+    {
+      size_t ox, oy, rx, ry;
+      limg_encode_3d_output<channels> decomposition;
+
+      if (!limg_encode_find_block_3d(pCtx, pDecomposition, blockFindStaticX, blockFindStaticY, &ox, &oy, &rx, &ry, decomposition))
+        break;
+    }
+  }
+
+  (void)pDecoded;
+  (void)pFactorsA;
+  (void)pFactorsB;
+  (void)pFactorsC;
+  (void)pShiftABCX;
+  (void)pColAMin;
+  (void)pColAMax;
+  (void)pColBMin;
+  (void)pColBMax;
+  (void)pColCMin;
+  (void)pColCMax;
+  (void)pBlockIndex;
+  (void)pBlockError;
+  (void)accum_bits;
+}
+
 template <size_t channels, bool store_factors_shift, bool decode, bool store_accum_bits>
 void limg_encode3d_test_y_range(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, size_t accum_bits[3 + 3 * 8], const size_t y_start, const size_t y_end)
 {
@@ -1458,6 +1793,112 @@ limg_result limg_encode3d_test_perf(const uint32_t *pIn, const size_t sizeX, con
   goto epilogue;
 
 epilogue:
+
+  return result;
+}
+
+limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
+{
+  limg_result result = limg_success;
+
+  limg_encode_context ctx;
+  memset(&ctx, 0, sizeof(ctx));
+
+  ctx.pSourceImage = pIn;
+  ctx.sizeX = sizeX;
+  ctx.sizeY = sizeY;
+  ctx.hasAlpha = hasAlpha;
+  ctx.maxPixelBlockError = 0x12 * (errorFactor);
+  ctx.maxBlockPixelError = 0x1C * (errorFactor / 3); // error is multiplied by 0x10.
+  ctx.maxPixelChannelBlockError = 0x40 * (errorFactor / 2);
+  ctx.maxBlockExpandError = 0x20 * (errorFactor);
+  ctx.maxPixelBitCrushError = 0x6 * (errorFactor / 2);
+  ctx.maxBlockBitCrushError = 0x4 * (errorFactor / 2); // error is multiplied by 0x10.
+  ctx.ditheringEnabled = true;
+  ctx.fastBitCrush = fastBitCrushing;
+  ctx.guessCrush = true;
+  ctx.crushBits = errorFactor != 0;
+  ctx.errorPixelRetainingBitCrush = !fastBitCrushing;
+  ctx.coarseFineBitCrush = !ctx.errorPixelRetainingBitCrush; // faster & less accurate. faster with `ctx.errorPixelRetainingBitCrush` false.
+
+  if constexpr (limg_LuminanceDependentPixelError)
+  {
+    ctx.maxPixelBlockError *= 0x10;
+    ctx.maxBlockPixelError *= 0x10;
+    ctx.maxPixelBitCrushError *= 0x10;
+    ctx.maxBlockBitCrushError *= 0x10;
+  }
+
+  if constexpr (limg_ColorDependentBlockError)
+  {
+    ctx.maxPixelBlockError *= 4;
+    ctx.maxBlockPixelError *= 4;
+    ctx.maxPixelBitCrushError *= 7;
+    ctx.maxBlockBitCrushError *= 7;
+  }
+
+  if constexpr (limg_RetrievePreciseDecomposition == 2)
+  {
+    ctx.maxPixelBlockError *= 0x1;
+    ctx.maxBlockPixelError *= 0x1;
+    ctx.maxPixelBitCrushError *= 0x1;
+    ctx.maxBlockBitCrushError *= 0x1;
+  }
+
+  ctx.blockX = (ctx.sizeX + (limg_MinBlockSize - 1)) / limg_MinBlockSize;
+  ctx.blockY = (ctx.sizeY + (limg_MinBlockSize - 1)) / limg_MinBlockSize;
+  ctx.pBlockColorDecompositions = malloc(ctx.blockX * ctx.blockY * (hasAlpha ? sizeof(limg_encode_3d_output<4>) : sizeof(limg_encode_3d_output<3>)));
+  LIMG_ERROR_IF(ctx.pBlockColorDecompositions == nullptr, limg_error_MemoryAllocationFailure);
+
+  ctx.pBlockInfo = reinterpret_cast<uint32_t *>(malloc(ctx.blockX * ctx.blockY * sizeof(uint32_t)));
+  LIMG_ERROR_IF(ctx.pBlockInfo == nullptr, limg_error_MemoryAllocationFailure);
+
+  _DetectCPUFeatures();
+
+  size_t accum_bits[3 + 3 * 9] = { 0 };
+
+  if (ctx.hasAlpha)
+    limg_encode3d_blocked_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, pThreadPool);
+  else
+    limg_encode3d_blocked_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, pThreadPool);
+
+#ifdef PRINT_TEST_OUTPUT
+  const size_t totalPixels = ctx.sizeX * ctx.sizeY;
+
+  printf("\nAverage Block Bits: %5.3f (A: %5.3f | B: %5.3f | C: %5.3f)\n\n", (accum_bits[0] + accum_bits[1] + accum_bits[2]) / (double)totalPixels, accum_bits[0] / (double)totalPixels, accum_bits[1] / (double)totalPixels, accum_bits[2] / (double)totalPixels);
+
+  for (size_t i = 0; i < 9; i++)
+    printf(" %" PRIu64 " bit   ", 8 - i);
+
+  for (size_t i = 0; i < 3; i++)
+  {
+    puts("");
+
+    for (size_t j = 0; j < 9; j++)
+      printf("%7.4f  ", accum_bits[3 + i * 9 + j] * 100.0 / (double)totalPixels);
+  }
+
+  puts("\n");
+
+  if constexpr (limg_DiagnoseCulprits)
+  {
+    printf("CULPRIT info: (%" PRIu64 " culprits)\n", ctx.culprits);
+    printf("PixelBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    printf("BlockBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    puts("");
+  }
+
+#endif
+
+  goto epilogue;
+
+epilogue:
+
+  if (ctx.pBlockColorDecompositions != nullptr)
+    free(ctx.pBlockColorDecompositions);
+
+  if (ctx.pBlockInfo != nullptr)
+    free(ctx.pBlockInfo);
 
   return result;
 }
