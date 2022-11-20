@@ -204,8 +204,8 @@ int32_t main(const int32_t argc, const char **pArgv)
     }
 
     uint32_t *pShift = nullptr;
-    uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr;
-    uint32_t *pColAMin = nullptr, *pColAMax = nullptr, *pColBMin = nullptr, *pColBMax = nullptr, *pColCMin = nullptr, *pColCMax = nullptr;
+    uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr, *pBlockError = nullptr;
+    uint32_t *pColAMin = nullptr, *pColAMax = nullptr, *pColBMin = nullptr, *pColBMax = nullptr, *pColCMin = nullptr, *pColCMax = nullptr, *pBlockIndex = nullptr;
 
     // Allocate space for a, b, factors, blockError.
     if (sourceImagePath != nullptr)
@@ -213,6 +213,7 @@ int32_t main(const int32_t argc, const char **pArgv)
       pFactorsA = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+      pBlockError = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColAMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColAMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
@@ -220,6 +221,7 @@ int32_t main(const int32_t argc, const char **pArgv)
       pColBMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColCMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColCMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
+      pBlockIndex = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
     }
 
     // Print Image Info.
@@ -233,7 +235,7 @@ int32_t main(const int32_t argc, const char **pArgv)
     {
       const int64_t before = CurrentTimeNs();
 
-      const limg_result result = limg_encode3d_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+      const limg_result result = limg_encode3d_blocked_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
 
       const int64_t after = CurrentTimeNs();
 
@@ -341,6 +343,7 @@ int32_t main(const int32_t argc, const char **pArgv)
       stbi_write_tga("limg_col_b_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColBMax);
       stbi_write_tga("limg_col_c_min.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMin);
       stbi_write_tga("limg_col_c_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColCMax);
+      stbi_write_tga("limg_block_idx.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pBlockIndex);
     }
 
     free(pSourceImage);
@@ -351,6 +354,9 @@ int32_t main(const int32_t argc, const char **pArgv)
 
     free(pShift);
     pShift = nullptr;
+
+    free(pBlockError);
+    pBlockError = nullptr;
 
     free(pFactorsA);
     pFactorsA = nullptr;
@@ -378,6 +384,9 @@ int32_t main(const int32_t argc, const char **pArgv)
 
     free(pColCMax);
     pColCMax = nullptr;
+
+    free(pBlockIndex);
+    pBlockIndex = nullptr;
 
   } while (sourceImagePath == nullptr && argIndex < argc);
 

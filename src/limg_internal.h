@@ -15,7 +15,7 @@
 
 #include <type_traits>
 
-#define LIMG_SUCCESS(errorCode) (errorCode == fpR_Success)
+#define LIMG_SUCCESS(errorCode) (errorCode == limg_success)
 #define LIMG_FAILED(errorCode) (!(LIMG_SUCCESS(errorCode)))
 
 #define LIMG_ERROR_SET(errorCode) \
