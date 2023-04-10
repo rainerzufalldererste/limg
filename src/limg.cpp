@@ -1208,7 +1208,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
       const size_t newRx = rx + 1;
       limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (ox + rx + 1 < pCtx->blockX && limg_encode_check_block_unused_3d(pCtx, ox + rx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox + rx, oy, newRx - rx, ry, newDecomp))
+      if (ox + newRx < pCtx->blockX && limg_encode_check_block_unused_3d(pCtx, ox + rx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox + rx, oy, newRx - rx, ry, newDecomp))
       {
         rx = newRx;
         decomp = newDecomp;
@@ -1224,7 +1224,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
       const size_t newRy = ry + 1;
       limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (oy + ry + 1 < pCtx->blockY && limg_encode_check_block_unused_3d(pCtx, ox, oy + ry, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, oy + ry, rx, newRy - ry, newDecomp))
+      if (oy + newRy < pCtx->blockY && limg_encode_check_block_unused_3d(pCtx, ox, oy + ry, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, oy + ry, rx, newRy - ry, newDecomp))
       {
         ry = newRy;
         decomp = newDecomp;
@@ -1307,7 +1307,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
       if (!limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, false, true, false, true, decomp))
         continue;
 
-      if (rx == 1 && ry == 1)
+      if (*pRangeX == 1 && *pRangeY == 1)
         continue;
 
       rx = *pRangeX;
@@ -1319,8 +1319,8 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
       {
         *pOffsetX = ox + rx / 2;
         *pOffsetY = oy + ry / 2;
-        *pRangeX = rx;
-        *pRangeY = ry;
+        *pRangeX = rx / 2;
+        *pRangeY = ry / 2;
 
         if (limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp))
         {
@@ -1339,9 +1339,9 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
         staticY = oy;
 
         decomp = sDecomp;
-      }
 
-      return true;
+        return true;
+      }
     }
 
     ox = 0;
@@ -1611,7 +1611,7 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
       blockIndex++;
 
       for (size_t y = oy; y < ry; y++)
-        for (size_t x = oy; x < ry; x++)
+        for (size_t x = ox; x < rx; x++)
           pCtx->pBlockInfo[x + y * pCtx->blockX] = BlockInfo_InUse;
 
       size_t x_px = rx * limg_MinBlockSize;
@@ -2153,7 +2153,7 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
   ctx.pBlockColorDecompositions = malloc(ctx.blockX * ctx.blockY * (hasAlpha ? sizeof(limg_encode_3d_output<4>) : sizeof(limg_encode_3d_output<3>)));
   LIMG_ERROR_IF(ctx.pBlockColorDecompositions == nullptr, limg_error_MemoryAllocationFailure);
 
-  ctx.pBlockInfo = reinterpret_cast<uint32_t *>(malloc(ctx.blockX * ctx.blockY * sizeof(uint32_t)));
+  ctx.pBlockInfo = reinterpret_cast<uint32_t *>(calloc(ctx.blockX * ctx.blockY, sizeof(uint32_t)));
   LIMG_ERROR_IF(ctx.pBlockInfo == nullptr, limg_error_MemoryAllocationFailure);
 
   _DetectCPUFeatures();
