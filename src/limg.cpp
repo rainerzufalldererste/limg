@@ -1136,16 +1136,42 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 template <size_t channels>
 bool LIMG_INLINE limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
 {
+  float avgDiff[channels];
   int16_t dirA[channels];
   int16_t dirB[channels];
+  int32_t lengthA = 0;
+  int32_t lengthB = 0;
+  float avgDiffLength = 0;
 
   for (size_t i = 0; i < channels; i++)
   {
+    avgDiff[i] = result.avg[i] - b.avg[i];
+    avgDiffLength += avgDiff[i] * avgDiff[i];
+
     dirA[i] = result.dirA_max[i] - result.dirA_min[i];
     dirB[i] = b.dirA_max[i] - b.dirA_min[i];
+
+    lengthA += (int32_t)(dirA[i] * dirA[i]);
+    lengthB += (int32_t)(dirB[i] * dirB[i]);
   }
 
-  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
+  float nDirAf[channels];
+  float nDirBf[channels];
+  const float lengthAf = (float)lengthA;
+  const float lengthBf = (float)lengthB;
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    nDirAf[i] = (float)dirA[i] / lengthAf;
+    nDirBf[i] = (float)dirB[i] / lengthBf;
+  }
+
+  const float nDirDiff = limg_dot<float, channels>(nDirAf, nDirBf);
+  const float avgDiffVsLength = avgDiffLength / ((lengthAf + lengthBf + 0.1f) * 0.5f);
+
+  (void)avgDiffVsLength;
+
+  if (nDirDiff > (float)pCtx->maxBlockExpandError)
     return false;
 
   for (size_t i = 0; i < channels; i++)
@@ -2157,6 +2183,24 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
   LIMG_ERROR_IF(ctx.pBlockInfo == nullptr, limg_error_MemoryAllocationFailure);
 
   _DetectCPUFeatures();
+
+  // Tests.
+  {
+    limg_encode_3d_output<3> a;
+    limg_encode_3d_output<3> b;
+
+    const uint32_t a_data[] = { 0x228855, 0x22AA66, 0x22CC77, 0x22EE88, 0x33AA66, 0x11CC77 };
+    const uint32_t b_data[] = { 0x226644, 0x224433, 0x222222, 0x220011, 0x332222, 0x114433 };
+    float buffer[6 * 4];
+
+    limg_encode_decomposition_state encode_state;
+    limg_encode_sum_to_decomposition_state<3>(&ctx, a_data, LIMG_ARRAYSIZE(a_data), encode_state);
+    limg_encode_get_block_factors_accurate_from_state_3d<3>(&ctx, a_data, LIMG_ARRAYSIZE(a_data), a, encode_state, buffer);
+    limg_encode_sum_to_decomposition_state<3>(&ctx, b_data, LIMG_ARRAYSIZE(b_data), encode_state);
+    limg_encode_get_block_factors_accurate_from_state_3d<3>(&ctx, b_data, LIMG_ARRAYSIZE(b_data), b, encode_state, buffer);
+    
+    limg_encode_3d_matches<3>(&ctx, a, b);
+  }
 
   size_t accum_bits[3 + 3 * 9] = { 0 };
 
