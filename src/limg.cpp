@@ -1136,61 +1136,27 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 template <size_t channels>
 bool LIMG_INLINE limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
 {
-  float avgDiff[channels];
-  int16_t dirA[channels];
-  int16_t dirB[channels];
-  int32_t lengthA = 0;
-  int32_t lengthB = 0;
-  float avgDiffLength = 0;
+  limg_encode_3d_output<channels> &a = result;
+  limg_color_error_state_3d<channels> stateA, stateB;
+  limg_init_color_error_state_3d<channels>(a, stateA);
+  limg_init_color_error_state_3d<channels>(b, stateB);
 
-  for (size_t i = 0; i < channels; i++)
+  float sumFactors = 0;
+  float fac_a, fac_b, fac_c;
+
+  // Averages
   {
-    avgDiff[i] = result.avg[i] - b.avg[i];
-    avgDiffLength += avgDiff[i] * avgDiff[i];
+    limg_color_error_state_3d_get_factors<channels>(b.avg, a, stateA, fac_a, fac_b, fac_c);
+    sumFactors += fabsf(fac_a) + fabsf(0.5f - fac_b) * 2.f + fabsf(0.5f - fac_c) * 2.f;
 
-    dirA[i] = result.dirA_max[i] - result.dirA_min[i];
-    dirB[i] = b.dirA_max[i] - b.dirA_min[i];
-
-    lengthA += (int32_t)(dirA[i] * dirA[i]);
-    lengthB += (int32_t)(dirB[i] * dirB[i]);
+    limg_color_error_state_3d_get_factors<channels>(a.avg, b, stateB, fac_a, fac_b, fac_c);
+    sumFactors += fabsf(fac_a) + fabsf(0.5f - fac_b) * 2.f + fabsf(0.5f - fac_c) * 2.f;
   }
 
-  float nDirAf[channels];
-  float nDirBf[channels];
-  const float lengthAf = (float)lengthA;
-  const float lengthBf = (float)lengthB;
+  float color[channels];
+  (void)color;
 
-  for (size_t i = 0; i < channels; i++)
-  {
-    nDirAf[i] = (float)dirA[i] / lengthAf;
-    nDirBf[i] = (float)dirB[i] / lengthBf;
-  }
-
-  const float nDirDiff = limg_dot<float, channels>(nDirAf, nDirBf);
-  const float avgDiffVsLength = avgDiffLength / ((lengthAf + lengthBf + 0.1f) * 0.5f);
-
-  (void)avgDiffVsLength;
-
-  if (nDirDiff > (float)pCtx->maxBlockExpandError)
-    return false;
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    dirA[i] = result.dirB_mag[i] - result.dirB_offset[i];
-    dirB[i] = b.dirB_mag[i] - b.dirB_offset[i];
-  }
-
-  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
-    return false;
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    dirA[i] = result.dirC_mag[i] - result.dirC_offset[i];
-    dirB[i] = b.dirC_mag[i] - b.dirC_offset[i];
-  }
-
-  if (limg_dot<int16_t, channels>(dirA, dirB) > (int64_t)pCtx->maxBlockExpandError)
-    return false;
+  (void)pCtx;
 
   return true; // TODO: Tons of work needed here.
 }
