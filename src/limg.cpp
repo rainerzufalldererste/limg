@@ -1092,6 +1092,7 @@ void limg_encode3d_blocked_test_y_range(limg_encode_context *pCtx, const size_t 
   uint32_t pixels[limg_MinBlockSize * limg_MinBlockSize];
 
   limg_encode_3d_output<channels> *pOut = reinterpret_cast<limg_encode_3d_output<channels> *>(pCtx->pBlockColorDecompositions);
+  pOut += (y_start / limg_MinBlockSize) * pCtx->blockX;
 
   for (size_t y = y_start; y < y_end; y += limg_MinBlockSize)
   {
@@ -1134,10 +1135,8 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 }
 
 template <size_t channels>
-bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* pCtx */, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* pCtx */, const limg_encode_3d_output<channels> &a, const limg_encode_3d_output<channels> &b)
 {
-  limg_encode_3d_output<channels> const &a = result;
-
   limg_color_error_state_3d<channels> stateA, stateB;
   limg_init_color_error_state_3d<channels>(a, stateA);
   limg_init_color_error_state_3d<channels>(b, stateB);
@@ -1216,15 +1215,15 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   constexpr float divToAvg = 1.f / (3 * 3 * 3);
   const float sumFactorsAvg = sumFactors * divToAvg;
 
-  constexpr float maxFactorSumCombine = 0.1f;
+  constexpr float maxFactorSumCombine = 2.8f;
 
   return (sumFactorsAvg < maxFactorSumCombine);
 }
 
 template <size_t channels>
-bool limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+bool limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &a, const limg_encode_3d_output<channels> &b)
 {
-  return limg_encode_3d_matches_sse2<channels>(pCtx, result, b);
+  return limg_encode_3d_matches_sse2<channels>(pCtx, a, b);
 }
 
 template <size_t channels>
@@ -1637,10 +1636,10 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
       const size_t end = y_start + y_range;
       y_start += y_range;
 
-      limg_thread_pool_add(pThreadPool, [&, start, end]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, start, end); });
+      limg_thread_pool_add(pThreadPool, [=]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, start, end); });
     }
 
-    limg_thread_pool_add(pThreadPool, [&]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, y_start, pCtx->sizeY); });
+    limg_thread_pool_add(pThreadPool, [=]() { limg_encode3d_blocked_test_y_range<channels>(pCtx, y_start, pCtx->sizeY); });
 
     limg_thread_pool_await(pThreadPool);
   }
