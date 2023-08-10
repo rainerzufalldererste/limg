@@ -1134,54 +1134,56 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 }
 
 template <size_t channels>
-bool LIMG_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* pCtx */, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
 {
   limg_encode_3d_output<channels> const &a = result;
-
-  int32_t LIMG_ALIGN(16) lengthSqDirA[4] = { 0, 0, 0 }; // just 4 because of SIMD.
-  int32_t LIMG_ALIGN(16) lengthSqDirB[4] = { 0, 0, 0 }; // just 4 because of SIMD.
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    const int16_t diffDirA = a.dirA_max[i] - a.dirA_min[i];
-    const int16_t diffDirB = b.dirA_max[i] - b.dirA_min[i];
-
-    lengthSqDirA[0] += (int32_t)(diffDirA * diffDirA);
-    lengthSqDirB[0] += (int32_t)(diffDirB * diffDirB);
-    lengthSqDirA[1] += (int32_t)(a.dirB_mag[i] * a.dirB_mag[i]);
-    lengthSqDirB[1] += (int32_t)(b.dirB_mag[i] * b.dirB_mag[i]);
-    lengthSqDirA[2] += (int32_t)(a.dirC_mag[i] * a.dirC_mag[i]);
-    lengthSqDirB[2] += (int32_t)(b.dirC_mag[i] * b.dirC_mag[i]);
-  }
-
-  float LIMG_ALIGN(16) invLenDirA[4]; // just 4 because of SIMD.
-  float LIMG_ALIGN(16) invLenDirB[4]; // just 4 because of SIMD.
-  _mm_store_ps(invLenDirA, _mm_rsqrt_ps(_mm_cvtepi32_ps(_mm_load_si128(reinterpret_cast<__m128i *>(lengthSqDirA)))));
-  _mm_store_ps(invLenDirB, _mm_rsqrt_ps(_mm_cvtepi32_ps(_mm_load_si128(reinterpret_cast<__m128i *>(lengthSqDirB)))));
-
-  // Since the directions for b and c are calculated from the extreme point rather than the center, we're scaling them.
-  invLenDirA[1] *= 2.f;
-  invLenDirB[1] *= 2.f;
-  invLenDirA[2] *= 2.f;
-  invLenDirB[2] *= 2.f;
 
   limg_color_error_state_3d<channels> stateA, stateB;
   limg_init_color_error_state_3d<channels>(a, stateA);
   limg_init_color_error_state_3d<channels>(b, stateB);
 
-  float sumFactors = 0;
-  float fac_a, fac_b, fac_c;
+  float LIMG_ALIGN(16) lenSqDirA[4] = { 0.01f, 0.01f, 0.01f, 0.01f }; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) lenSqDirB[4] = { 0.01f, 0.01f, 0.01f, 0.01f }; // just 4 because of SIMD.
 
-  // Averages
+  for (size_t i = 0; i < channels; i++)
   {
-    limg_color_error_state_3d_get_factors<channels>(b.avg, a, stateA, fac_a, fac_b, fac_c);
-    sumFactors += fabsf(fac_a) * invLenDirA[0] + fabsf(0.5f - fac_b) * invLenDirA[1] + fabsf(0.5f - fac_c) * invLenDirA[2];
+    lenSqDirA[0] += (stateA.normalA[i] * stateA.normalA[i]);
+    lenSqDirB[0] += (stateB.normalA[i] * stateB.normalA[i]);
+    lenSqDirA[1] += (stateA.normalB[i] * stateA.normalB[i]);
+    lenSqDirB[1] += (stateB.normalB[i] * stateB.normalB[i]);
+    lenSqDirA[2] += (stateA.normalC[i] * stateA.normalC[i]);
+    lenSqDirB[2] += (stateB.normalC[i] * stateB.normalC[i]);
+  }
 
-    limg_color_error_state_3d_get_factors<channels>(a.avg, b, stateB, fac_a, fac_b, fac_c);
-    sumFactors += fabsf(fac_a) * invLenDirB[0] + fabsf(0.5f - fac_b) * invLenDirB[1] + fabsf(0.5f - fac_c) * invLenDirB[2];
+  const float sumLenSqDirA = lenSqDirA[0] + lenSqDirA[1] + lenSqDirA[2];
+  const float sumLenSqDirB = lenSqDirB[0] + lenSqDirB[1] + lenSqDirB[2];
+  const float sumLenRatio = (sumLenSqDirA + 1) / (sumLenSqDirB + 1);
+
+  constexpr float maxRatio = 6.0f;
+
+  if (sumLenRatio > maxRatio || sumLenRatio < (1.f / maxRatio))
+    return false;
+
+  float LIMG_ALIGN(16) invLenDirA[4]; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) invLenDirB[4]; // just 4 because of SIMD.
+  _mm_store_ps(invLenDirA, _mm_rsqrt_ps(_mm_load_ps(lenSqDirA)));
+  _mm_store_ps(invLenDirB, _mm_rsqrt_ps(_mm_load_ps(lenSqDirB)));
+
+  for (size_t i = 1; i < 3; i++)
+  {
+    invLenDirA[i] *= 2.f;
+    invLenDirB[i] *= 2.f;
+
+    if (invLenDirA[i] >= 19.0f)
+      invLenDirA[i] = 0;
+
+    if (invLenDirB[i] >= 19.0f)
+      invLenDirB[i] = 0;
   }
 
   float color[channels];
+  float fac_a, fac_b, fac_c;
+  float sumFactors = 0;
 
   for (size_t z = 0; z < 3; z++)
   {
@@ -1211,9 +1213,12 @@ bool LIMG_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx, limg_enc
     }
   }
 
-  (void)pCtx;
+  constexpr float divToAvg = 1.f / (3 * 3 * 3);
+  const float sumFactorsAvg = sumFactors * divToAvg;
 
-  return true; // TODO: Tons of work needed here.
+  constexpr float maxFactorSumCombine = 0.1f;
+
+  return (sumFactorsAvg < maxFactorSumCombine);
 }
 
 template <size_t channels>
@@ -1230,7 +1235,7 @@ bool LIMG_INLINE limg_encode_3d_check_area(limg_encode_context *pCtx, limg_encod
   for (size_t y = 0; y < ry; y++)
   {
     for (size_t x = 0; x < rx; x++)
-      if (!limg_encode_3d_matches(pCtx, out, pDecompLine[x]))
+      if (x + y > 0 && !limg_encode_3d_matches(pCtx, out, pDecompLine[x]))
         return false;
 
     pDecompLine += pCtx->blockX;
@@ -1294,7 +1299,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
       const size_t newRy = ry + 1;
       limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (oy + ry > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, newDecomp))
+      if (oy > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, newDecomp))
       {
         oy = newOy;
         ry = newRy;
@@ -1312,7 +1317,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
       const size_t newRx = rx + 1;
       limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (ox + rx > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, newDecomp))
+      if (ox > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, newDecomp))
       {
         ox = newOx;
         rx = newRx;
@@ -1647,6 +1652,9 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
   size_t pixelCapacity = 0;
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
   uint32_t blockIndex = 0;
+  const size_t numBlocks = pCtx->blockX * pCtx->blockY;
+  (void)numBlocks;
+  size_t consumedBlocks = 0;
 
   // Attempt to Merge Blocks.
   {
@@ -1663,9 +1671,11 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
 
       blockIndex++;
 
-      for (size_t y = oy; y < ry; y++)
-        for (size_t x = ox; x < rx; x++)
+      for (size_t y = oy; y < oy + ry; y++)
+        for (size_t x = ox; x < ox + rx; x++)
           pCtx->pBlockInfo[x + y * pCtx->blockX] = BlockInfo_InUse;
+
+      consumedBlocks += ry * rx;
 
       size_t x_px = rx * limg_MinBlockSize;
       size_t y_px = ry * limg_MinBlockSize;
@@ -2210,24 +2220,6 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
   LIMG_ERROR_IF(ctx.pBlockInfo == nullptr, limg_error_MemoryAllocationFailure);
 
   _DetectCPUFeatures();
-
-  // Tests.
-  {
-    limg_encode_3d_output<3> a;
-    limg_encode_3d_output<3> b;
-
-    const uint32_t a_data[] = { 0x228855, 0x22AA66, 0x22CC77, 0x22EE88, 0x33AA66, 0x11CC77 };
-    const uint32_t b_data[] = { 0x226644, 0x224433, 0x222222, 0x220011, 0x332222, 0x114433 };
-    float buffer[6 * 4];
-
-    limg_encode_decomposition_state encode_state;
-    limg_encode_sum_to_decomposition_state<3>(&ctx, a_data, LIMG_ARRAYSIZE(a_data), encode_state);
-    limg_encode_get_block_factors_accurate_from_state_3d<3>(&ctx, a_data, LIMG_ARRAYSIZE(a_data), a, encode_state, buffer);
-    limg_encode_sum_to_decomposition_state<3>(&ctx, b_data, LIMG_ARRAYSIZE(b_data), encode_state);
-    limg_encode_get_block_factors_accurate_from_state_3d<3>(&ctx, b_data, LIMG_ARRAYSIZE(b_data), b, encode_state, buffer);
-    
-    limg_encode_3d_matches<3>(&ctx, a, b);
-  }
 
   size_t accum_bits[3 + 3 * 9] = { 0 };
 
