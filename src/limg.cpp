@@ -1141,8 +1141,8 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   limg_init_color_error_state_3d<channels>(a, stateA);
   limg_init_color_error_state_3d<channels>(b, stateB);
 
-  float LIMG_ALIGN(16) lenSqDirA[4] = { 0.01f, 0.01f, 0.01f, 0.01f }; // just 4 because of SIMD.
-  float LIMG_ALIGN(16) lenSqDirB[4] = { 0.01f, 0.01f, 0.01f, 0.01f }; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) lenSqDirA[4] = { 0.1f, 0.1f, 0.1f, 0.1f }; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) lenSqDirB[4] = { 0.1f, 0.1f, 0.1f, 0.1f }; // just 4 because of SIMD.
 
   for (size_t i = 0; i < channels; i++)
   {
@@ -1173,10 +1173,10 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
     invLenDirA[i] *= 2.f;
     invLenDirB[i] *= 2.f;
 
-    if (invLenDirA[i] >= 19.0f)
+    if (invLenDirA[i] >= 9.0f)
       invLenDirA[i] = 0;
 
-    if (invLenDirB[i] >= 19.0f)
+    if (invLenDirB[i] >= 9.0f)
       invLenDirB[i] = 0;
   }
 
@@ -1215,7 +1215,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   constexpr float divToAvg = 1.f / (3 * 3 * 3);
   const float sumFactorsAvg = sumFactors * divToAvg;
 
-  constexpr float maxFactorSumCombine = 2.8f;
+  constexpr float maxFactorSumCombine = 3.f;
 
   return (sumFactorsAvg < maxFactorSumCombine);
 }
