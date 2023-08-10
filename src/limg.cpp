@@ -1134,9 +1134,37 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 }
 
 template <size_t channels>
-bool LIMG_INLINE limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+bool LIMG_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
 {
-  limg_encode_3d_output<channels> &a = result;
+  limg_encode_3d_output<channels> const &a = result;
+
+  int32_t LIMG_ALIGN(16) lengthSqDirA[4] = { 0, 0, 0 }; // just 4 because of SIMD.
+  int32_t LIMG_ALIGN(16) lengthSqDirB[4] = { 0, 0, 0 }; // just 4 because of SIMD.
+
+  for (size_t i = 0; i < channels; i++)
+  {
+    const int16_t diffDirA = a.dirA_max[i] - a.dirA_min[i];
+    const int16_t diffDirB = b.dirA_max[i] - b.dirA_min[i];
+
+    lengthSqDirA[0] += (int32_t)(diffDirA * diffDirA);
+    lengthSqDirB[0] += (int32_t)(diffDirB * diffDirB);
+    lengthSqDirA[1] += (int32_t)(a.dirB_mag[i] * a.dirB_mag[i]);
+    lengthSqDirB[1] += (int32_t)(b.dirB_mag[i] * b.dirB_mag[i]);
+    lengthSqDirA[2] += (int32_t)(a.dirC_mag[i] * a.dirC_mag[i]);
+    lengthSqDirB[2] += (int32_t)(b.dirC_mag[i] * b.dirC_mag[i]);
+  }
+
+  float LIMG_ALIGN(16) invLenDirA[4]; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) invLenDirB[4]; // just 4 because of SIMD.
+  _mm_store_ps(invLenDirA, _mm_rsqrt_ps(_mm_cvtepi32_ps(_mm_load_si128(reinterpret_cast<__m128i *>(lengthSqDirA)))));
+  _mm_store_ps(invLenDirB, _mm_rsqrt_ps(_mm_cvtepi32_ps(_mm_load_si128(reinterpret_cast<__m128i *>(lengthSqDirB)))));
+
+  // Since the directions for b and c are calculated from the extreme point rather than the center, we're scaling them.
+  invLenDirA[1] *= 2.f;
+  invLenDirB[1] *= 2.f;
+  invLenDirA[2] *= 2.f;
+  invLenDirB[2] *= 2.f;
+
   limg_color_error_state_3d<channels> stateA, stateB;
   limg_init_color_error_state_3d<channels>(a, stateA);
   limg_init_color_error_state_3d<channels>(b, stateB);
@@ -1147,18 +1175,51 @@ bool LIMG_INLINE limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3
   // Averages
   {
     limg_color_error_state_3d_get_factors<channels>(b.avg, a, stateA, fac_a, fac_b, fac_c);
-    sumFactors += fabsf(fac_a) + fabsf(0.5f - fac_b) * 2.f + fabsf(0.5f - fac_c) * 2.f;
+    sumFactors += fabsf(fac_a) * invLenDirA[0] + fabsf(0.5f - fac_b) * invLenDirA[1] + fabsf(0.5f - fac_c) * invLenDirA[2];
 
     limg_color_error_state_3d_get_factors<channels>(a.avg, b, stateB, fac_a, fac_b, fac_c);
-    sumFactors += fabsf(fac_a) + fabsf(0.5f - fac_b) * 2.f + fabsf(0.5f - fac_c) * 2.f;
+    sumFactors += fabsf(fac_a) * invLenDirB[0] + fabsf(0.5f - fac_b) * invLenDirB[1] + fabsf(0.5f - fac_c) * invLenDirB[2];
   }
 
   float color[channels];
-  (void)color;
+
+  for (size_t z = 0; z < 3; z++)
+  {
+    const float zf = z * 0.5f;
+
+    for (size_t y = 0; y < 3; y++)
+    {
+      const float yf = y * 0.5f;
+
+      for (size_t x = 0; x < 3; x++)
+      {
+        const float xf = x * 0.5f;
+
+        for (size_t i = 0; i < channels; i++)
+          color[i] = stateB.normalA[i] * xf + stateB.normalB[i] * yf + stateB.normalC[i] * zf;
+
+        limg_color_error_state_3d_get_factors<channels>(color, a, stateA, fac_a, fac_b, fac_c);
+        sumFactors += fabsf(fac_a) * invLenDirA[0] + fabsf(0.5f - fac_b) * invLenDirA[1] + fabsf(0.5f - fac_c) * invLenDirA[2];
+
+        for (size_t i = 0; i < channels; i++)
+          color[i] = stateA.normalA[i] * xf + stateA.normalB[i] * yf + stateA.normalC[i] * zf;
+
+        limg_color_error_state_3d_get_factors<channels>(a.avg, b, stateB, fac_a, fac_b, fac_c);
+        sumFactors += fabsf(fac_a) * invLenDirB[0] + fabsf(0.5f - fac_b) * invLenDirB[1] + fabsf(0.5f - fac_c) * invLenDirB[2];
+
+      }
+    }
+  }
 
   (void)pCtx;
 
   return true; // TODO: Tons of work needed here.
+}
+
+template <size_t channels>
+bool limg_encode_3d_matches(limg_encode_context *pCtx, limg_encode_3d_output<channels> &result, const limg_encode_3d_output<channels> &b)
+{
+  return limg_encode_3d_matches_sse2<channels>(pCtx, result, b);
 }
 
 template <size_t channels>

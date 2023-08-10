@@ -46,6 +46,12 @@ inline void limgFreePtr(T **ppData)
   *ppData = nullptr;
 }
 
+#ifdef _MSC_VER
+#define LIMG_ALIGN(bytes) __declspec(align(bytes))
+#else
+#define LIMG_ALIGN(bytes) __attribute__((aligned(bytes)))
+#endif
+
 template <typename T, typename U>
 constexpr inline auto limgMax(const T &a, const U &b) -> decltype(a > b ? a : b)
 {
