@@ -1145,25 +1145,27 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
   float LIMG_ALIGN(16) lenSqDirA[4] = { 3, 3, 3 }; // just 4 because of SIMD.
   float LIMG_ALIGN(16) lenSqDirB[4] = { 3, 3, 3 }; // just 4 because of SIMD.
 
+  const float_t colorDiffFactors[4] = { 2, 4, 3, 3 }; // for a very basic perceptual model
+
   for (size_t i = 0; i < channels; i++)
   {
     const float avgDiff = a.avg[i] - b.avg[i];
-    avgDiffSq += avgDiff * avgDiff;
+    avgDiffSq += avgDiff * avgDiff * colorDiffFactors[i];
 
-    lenSqDirA[0] += (stateA.normalA[i] * stateA.normalA[i]);
-    lenSqDirB[0] += (stateB.normalA[i] * stateB.normalA[i]);
-    lenSqDirA[1] += (stateA.normalB[i] * stateA.normalB[i]);
-    lenSqDirB[1] += (stateB.normalB[i] * stateB.normalB[i]);
-    lenSqDirA[2] += (stateA.normalC[i] * stateA.normalC[i]);
-    lenSqDirB[2] += (stateB.normalC[i] * stateB.normalC[i]);
+    lenSqDirA[0] += (stateA.normalA[i] * stateA.normalA[i]) * colorDiffFactors[i];
+    lenSqDirB[0] += (stateB.normalA[i] * stateB.normalA[i]) * colorDiffFactors[i];
+    lenSqDirA[1] += (stateA.normalB[i] * stateA.normalB[i]) * colorDiffFactors[i];
+    lenSqDirB[1] += (stateB.normalB[i] * stateB.normalB[i]) * colorDiffFactors[i];
+    lenSqDirA[2] += (stateA.normalC[i] * stateA.normalC[i]) * colorDiffFactors[i];
+    lenSqDirB[2] += (stateB.normalC[i] * stateB.normalC[i]) * colorDiffFactors[i];
   }
 
   const float sumLenSqDirA = lenSqDirA[0] + lenSqDirA[1] + lenSqDirA[2];
   const float sumLenSqDirB = lenSqDirB[0] + lenSqDirB[1] + lenSqDirB[2];
   const float sumLenRatio = (sumLenSqDirA + 1) / (sumLenSqDirB + 1);
 
-  constexpr float maxAcceptAvgDiff = 64 * channels;
-  constexpr float maxAcceptRange = 180 * channels;
+  constexpr float maxAcceptAvgDiff = 96 * 3 * channels;
+  constexpr float maxAcceptRange = 250 * 3 * channels;
 
   if (avgDiffSq < maxAcceptAvgDiff && sumLenSqDirA < maxAcceptRange && sumLenSqDirB < maxAcceptRange)
     return true;
@@ -1183,7 +1185,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
     }
   }
 
-  constexpr float maxRatio = 5.0f;
+  constexpr float maxRatio = 6.0f;
 
   if (sumLenRatio > maxRatio || sumLenRatio < (1.f / maxRatio))
   {
@@ -1242,7 +1244,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
   constexpr float divToAvg = 1.f / (3 * 3 * 3);
   const float sumFactorsAvg = sumFactors * divToAvg;
 
-  constexpr float maxFactorSumCombine = 1.8f;
+  constexpr float maxFactorSumCombine = 2.5f;
 
   if constexpr (limg_DiagnoseCulprits)
   {
@@ -1418,7 +1420,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
         *pRangeX = rx / 3;
         *pRangeY = ry / 3;
 
-        if (limg_encode_find_block_3d_expand<channels, true>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp))
+        if (limg_encode_find_block_3d_expand<channels, true>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp) && *pRangeX * *pRangeY > rx * ry)
         {
           staticX = ox;
           staticY = oy;
