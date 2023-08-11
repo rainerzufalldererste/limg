@@ -242,6 +242,11 @@ int32_t main(const int32_t argc, const char **pArgv)
       printf("limg_encode_test completed with exit code 0x%" PRIX32 ".\n", result);
       printf("Elapsed Time: %f ms\n", (after - before) * 1e-6);
       printf("Throughput: %f Mpx/s\n", (sizeX * sizeY * 1e-6) / ((after - before) * 1e-9));
+
+      for (size_t y = 0; y < sizeY; y++)
+        for (size_t x = 0; x < sizeX; x++)
+          if (pBlockIndex[x + y * sizeX] & ((uint32_t)1 << 31))
+            pBlockIndex[x + y * sizeX] = Hash(pBlockIndex[x + y * sizeX]) | 0xFF000000;
     }
     else if (singlePerfEval)
     {

@@ -1135,17 +1135,21 @@ bool LIMG_INLINE limg_encode_check_block_unused_3d(limg_encode_context *pCtx, co
 }
 
 template <size_t channels>
-bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* pCtx */, const limg_encode_3d_output<channels> &a, const limg_encode_3d_output<channels> &b)
+bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx, const limg_encode_3d_output<channels> &a, const limg_encode_3d_output<channels> &b)
 {
   limg_color_error_state_3d<channels> stateA, stateB;
   limg_init_color_error_state_3d<channels>(a, stateA);
   limg_init_color_error_state_3d<channels>(b, stateB);
 
-  float LIMG_ALIGN(16) lenSqDirA[4] = { 0.1f, 0.1f, 0.1f, 0.1f }; // just 4 because of SIMD.
-  float LIMG_ALIGN(16) lenSqDirB[4] = { 0.1f, 0.1f, 0.1f, 0.1f }; // just 4 because of SIMD.
+  float avgDiffSq = 0;
+  float LIMG_ALIGN(16) lenSqDirA[4] = { 3, 3, 3 }; // just 4 because of SIMD.
+  float LIMG_ALIGN(16) lenSqDirB[4] = { 3, 3, 3 }; // just 4 because of SIMD.
 
   for (size_t i = 0; i < channels; i++)
   {
+    const float avgDiff = a.avg[i] - b.avg[i];
+    avgDiffSq += avgDiff * avgDiff;
+
     lenSqDirA[0] += (stateA.normalA[i] * stateA.normalA[i]);
     lenSqDirB[0] += (stateB.normalA[i] * stateB.normalA[i]);
     lenSqDirA[1] += (stateA.normalB[i] * stateA.normalB[i]);
@@ -1158,10 +1162,39 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   const float sumLenSqDirB = lenSqDirB[0] + lenSqDirB[1] + lenSqDirB[2];
   const float sumLenRatio = (sumLenSqDirA + 1) / (sumLenSqDirB + 1);
 
-  constexpr float maxRatio = 6.0f;
+  constexpr float maxAcceptAvgDiff = 32 * channels;
+  constexpr float maxAcceptRange = 180 * channels;
+
+  if (avgDiffSq < maxAcceptAvgDiff && sumLenSqDirA < maxAcceptRange && sumLenSqDirB < maxAcceptRange)
+    return true;
+
+  if constexpr (limg_DiagnoseCulprits)
+  {
+    if (avgDiffSq >= maxAcceptAvgDiff)
+    {
+      pCtx->culprits++;
+      pCtx->culpritWasFastBlockMergeAvgDiffError++;
+    }
+
+    if (!(sumLenSqDirA < maxAcceptRange && sumLenSqDirB < maxAcceptRange))
+    {
+      pCtx->culprits++;
+      pCtx->culpritWasFastBlockMergeRangeError++;
+    }
+  }
+
+  constexpr float maxRatio = 5.0f;
 
   if (sumLenRatio > maxRatio || sumLenRatio < (1.f / maxRatio))
+  {
+    if constexpr (limg_DiagnoseCulprits)
+    {
+      pCtx->culprits++;
+      pCtx->culpritWasBlockExpandSizeMismatchError++;
+    }
+    
     return false;
+  }
 
   float LIMG_ALIGN(16) invLenDirA[4]; // just 4 because of SIMD.
   float LIMG_ALIGN(16) invLenDirB[4]; // just 4 because of SIMD.
@@ -1172,12 +1205,6 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   {
     invLenDirA[i] *= 2.f;
     invLenDirB[i] *= 2.f;
-
-    if (invLenDirA[i] >= 9.0f)
-      invLenDirA[i] = 0;
-
-    if (invLenDirB[i] >= 9.0f)
-      invLenDirB[i] = 0;
   }
 
   float color[channels];
@@ -1215,9 +1242,26 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context * /* p
   constexpr float divToAvg = 1.f / (3 * 3 * 3);
   const float sumFactorsAvg = sumFactors * divToAvg;
 
-  constexpr float maxFactorSumCombine = 3.f;
+  constexpr float maxFactorSumCombine = 1.8f;
 
-  return (sumFactorsAvg < maxFactorSumCombine);
+  if constexpr (limg_DiagnoseCulprits)
+  {
+    if (sumFactorsAvg < maxFactorSumCombine)
+    {
+      return true;
+    }
+    else
+    {
+      pCtx->culprits++;
+      pCtx->culpritWasBlockExpandValueMismatchError++;
+
+      return false;
+    }
+  }
+  else
+  {
+    return (sumFactorsAvg < maxFactorSumCombine);
+  }
 }
 
 template <size_t channels>
@@ -1263,12 +1307,10 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
     if (canGrowRight)
     {
       const size_t newRx = rx + 1;
-      limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (ox + newRx < pCtx->blockX && limg_encode_check_block_unused_3d(pCtx, ox + rx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox + rx, oy, newRx - rx, ry, newDecomp))
+      if (ox + newRx < pCtx->blockX && limg_encode_check_block_unused_3d(pCtx, ox + rx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox + rx, oy, newRx - rx, ry, decomp))
       {
         rx = newRx;
-        decomp = newDecomp;
       }
       else
       {
@@ -1279,12 +1321,10 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
     if (canGrowDown)
     {
       const size_t newRy = ry + 1;
-      limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (oy + newRy < pCtx->blockY && limg_encode_check_block_unused_3d(pCtx, ox, oy + ry, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, oy + ry, rx, newRy - ry, newDecomp))
+      if (oy + newRy < pCtx->blockY && limg_encode_check_block_unused_3d(pCtx, ox, oy + ry, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, oy + ry, rx, newRy - ry, decomp))
       {
         ry = newRy;
-        decomp = newDecomp;
       }
       else
       {
@@ -1296,13 +1336,11 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
     {
       const size_t newOy = oy - 1;
       const size_t newRy = ry + 1;
-      limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (oy > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, newDecomp))
+      if (oy > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, decomp))
       {
         oy = newOy;
         ry = newRy;
-        decomp = newDecomp;
       }
       else
       {
@@ -1314,13 +1352,11 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
     {
       const size_t newOx = ox - 1;
       const size_t newRx = rx + 1;
-      limg_encode_3d_output<channels> newDecomp = decomp;
 
-      if (ox > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, newDecomp))
+      if (ox > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, decomp))
       {
         ox = newOx;
         rx = newRx;
-        decomp = newDecomp;
       }
       else
       {
@@ -2248,8 +2284,15 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
   if constexpr (limg_DiagnoseCulprits)
   {
     printf("CULPRIT info: (%" PRIu64 " culprits)\n", ctx.culprits);
+    puts("-- Bit Crush -----------------------------------------");
     printf("PixelBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasPixelBitCrushError, (ctx.culpritWasPixelBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasPixelBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
     printf("BlockBitCrushError    : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockBitCrushError, (ctx.culpritWasBlockBitCrushError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockBitCrushError / (double)(ctx.culpritWasPixelBitCrushError + ctx.culpritWasBlockBitCrushError)) * 100.0);
+    puts("-- Block Merge ---------------------------------------");
+    printf("BlockMergeSizeError   : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockExpandSizeMismatchError, (ctx.culpritWasBlockExpandSizeMismatchError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockExpandSizeMismatchError / (double)(ctx.culpritWasBlockExpandSizeMismatchError + ctx.culpritWasBlockExpandValueMismatchError)) * 100.0);
+    printf("BlockMergeValueError  : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasBlockExpandValueMismatchError, (ctx.culpritWasBlockExpandValueMismatchError / (double)ctx.culprits) * 100.0, (ctx.culpritWasBlockExpandValueMismatchError / (double)(ctx.culpritWasBlockExpandSizeMismatchError + ctx.culpritWasBlockExpandValueMismatchError)) * 100.0);
+    puts("-- Fast Block Merge ----------------------------------");
+    printf("FastMergeAvgDiffError : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasFastBlockMergeAvgDiffError, (ctx.culpritWasFastBlockMergeAvgDiffError / (double)ctx.culprits) * 100.0, (ctx.culpritWasFastBlockMergeAvgDiffError / (double)(ctx.culpritWasFastBlockMergeAvgDiffError + ctx.culpritWasFastBlockMergeRangeError)) * 100.0);
+    printf("FastMergeRangeError   : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasFastBlockMergeRangeError, (ctx.culpritWasFastBlockMergeRangeError / (double)ctx.culprits) * 100.0, (ctx.culpritWasFastBlockMergeRangeError / (double)(ctx.culpritWasFastBlockMergeAvgDiffError + ctx.culpritWasFastBlockMergeRangeError)) * 100.0);
     puts("");
   }
 

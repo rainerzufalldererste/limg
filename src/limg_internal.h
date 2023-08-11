@@ -152,7 +152,7 @@ constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
-constexpr bool limg_DiagnoseCulprits = false;
+constexpr bool limg_DiagnoseCulprits = true;
 
 struct limg_encode_context
 {
@@ -175,7 +175,11 @@ struct limg_encode_context
     culpritWasPixelChannelBlockError,
     culpritWasBlockExpandError,
     culpritWasPixelBitCrushError,
-    culpritWasBlockBitCrushError;
+    culpritWasBlockBitCrushError,
+    culpritWasFastBlockMergeAvgDiffError,
+    culpritWasFastBlockMergeRangeError,
+    culpritWasBlockExpandSizeMismatchError,
+    culpritWasBlockExpandValueMismatchError;
 };
 
 #define LIMG_PRECISE_DECOMPOSITION 2
