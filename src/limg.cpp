@@ -1164,8 +1164,8 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
   const float sumLenSqDirB = lenSqDirB[0] + lenSqDirB[1] + lenSqDirB[2];
   const float sumLenRatio = (sumLenSqDirA + 1) / (sumLenSqDirB + 1);
 
-  constexpr float maxAcceptAvgDiff = 96 * 3 * channels;
-  constexpr float maxAcceptRange = 250 * 3 * channels;
+  constexpr float maxAcceptAvgDiff = 96 * 3 * channels; // 3 -> average colorDiffFactor.
+  constexpr float maxAcceptRange = 250 * 3 * channels; // 3 -> average colorDiffFactor.
 
   if (avgDiffSq < maxAcceptAvgDiff && sumLenSqDirA < maxAcceptRange && sumLenSqDirB < maxAcceptRange)
     return true;
@@ -1200,8 +1200,10 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
 
   float LIMG_ALIGN(16) invLenDirA[4]; // just 4 because of SIMD.
   float LIMG_ALIGN(16) invLenDirB[4]; // just 4 because of SIMD.
-  _mm_store_ps(invLenDirA, _mm_rsqrt_ps(_mm_load_ps(lenSqDirA)));
-  _mm_store_ps(invLenDirB, _mm_rsqrt_ps(_mm_load_ps(lenSqDirB)));
+  const __m128 one = _mm_set1_ps(1.f);
+
+  _mm_store_ps(invLenDirA, /*_mm_rsqrt_ps*/_mm_div_ps(one, (_mm_load_ps(lenSqDirA)))); // 1 / sqrt(len) wouldn't have the perceptual properties we're looking for.
+  _mm_store_ps(invLenDirB, /*_mm_rsqrt_ps*/_mm_div_ps(one, (_mm_load_ps(lenSqDirB)))); // 1 / sqrt(len) wouldn't have the perceptual properties we're looking for.
 
   for (size_t i = 1; i < 3; i++)
   {
