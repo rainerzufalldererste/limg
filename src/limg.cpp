@@ -1162,7 +1162,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
   const float sumLenSqDirB = lenSqDirB[0] + lenSqDirB[1] + lenSqDirB[2];
   const float sumLenRatio = (sumLenSqDirA + 1) / (sumLenSqDirB + 1);
 
-  constexpr float maxAcceptAvgDiff = 32 * channels;
+  constexpr float maxAcceptAvgDiff = 64 * channels;
   constexpr float maxAcceptRange = 180 * channels;
 
   if (avgDiffSq < maxAcceptAvgDiff && sumLenSqDirA < maxAcceptRange && sumLenSqDirB < maxAcceptRange)
@@ -1278,7 +1278,7 @@ bool LIMG_INLINE limg_encode_3d_check_area(limg_encode_context *pCtx, limg_encod
   for (size_t y = 0; y < ry; y++)
   {
     for (size_t x = 0; x < rx; x++)
-      if (x + y > 0 && !limg_encode_3d_matches(pCtx, out, pDecompLine[x]))
+      if (!limg_encode_3d_matches(pCtx, out, pDecompLine[x]))
         return false;
 
     pDecompLine += pCtx->blockX;
@@ -1287,7 +1287,7 @@ bool LIMG_INLINE limg_encode_3d_check_area(limg_encode_context *pCtx, limg_encod
   return true;
 }
 
-template <size_t channels>
+template <size_t channels, bool canGrowUpLeft>
 bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *pCtx, limg_encode_3d_output<channels> *pDecomp, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, const bool up, const bool down, const bool left, const bool right, limg_encode_3d_output<channels> &out_decomp)
 {
   size_t ox = *pOffsetX;
@@ -1332,35 +1332,38 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
       }
     }
 
-    if (canGrowUp)
+    if constexpr (canGrowUpLeft)
     {
-      const size_t newOy = oy - 1;
-      const size_t newRy = ry + 1;
+      if (canGrowUp)
+      {
+        const size_t newOy = oy - 1;
+        const size_t newRy = ry + 1;
 
-      if (oy > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, decomp))
-      {
-        oy = newOy;
-        ry = newRy;
+        if (oy > 0 && limg_encode_check_block_unused_3d(pCtx, ox, newOy, rx, newRy - ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, ox, newOy, rx, newRy - ry, decomp))
+        {
+          oy = newOy;
+          ry = newRy;
+        }
+        else
+        {
+          canGrowUp = false;
+        }
       }
-      else
-      {
-        canGrowUp = false;
-      }
-    }
 
-    if (canGrowLeft)
-    {
-      const size_t newOx = ox - 1;
-      const size_t newRx = rx + 1;
+      if (canGrowLeft)
+      {
+        const size_t newOx = ox - 1;
+        const size_t newRx = rx + 1;
 
-      if (ox > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, decomp))
-      {
-        ox = newOx;
-        rx = newRx;
-      }
-      else
-      {
-        canGrowLeft = false;
+        if (ox > 0 && limg_encode_check_block_unused_3d(pCtx, newOx, oy, newRx - rx, ry) && limg_encode_3d_check_area<channels>(pCtx, pDecomp, newOx, oy, newRx - rx, ry, decomp))
+        {
+          ox = newOx;
+          rx = newRx;
+        }
+        else
+        {
+          canGrowLeft = false;
+        }
       }
     }
   }
@@ -1397,7 +1400,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
       *pRangeX = rx;
       *pRangeY = ry;
 
-      if (!limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, false, true, false, true, decomp))
+      if (!limg_encode_find_block_3d_expand<channels, false>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, false, true, false, true, decomp))
         continue;
 
       if (*pRangeX == 1 && *pRangeY == 1)
@@ -1408,14 +1411,14 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
 
       limg_encode_3d_output<channels> sDecomp = decomp;
 
-      if (rx >= 3 && ry >= 3)
+      if (rx >= 3 && ry >= 3) // let's try expanding from the center third.
       {
-        *pOffsetX = ox + rx / 2;
-        *pOffsetY = oy + ry / 2;
-        *pRangeX = rx / 2;
-        *pRangeY = ry / 2;
+        *pOffsetX = ox + rx / 3;
+        *pOffsetY = oy + ry / 3;
+        *pRangeX = rx / 3;
+        *pRangeY = ry / 3;
 
-        if (limg_encode_find_block_3d_expand(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp))
+        if (limg_encode_find_block_3d_expand<channels, true>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp))
         {
           staticX = ox;
           staticY = oy;
