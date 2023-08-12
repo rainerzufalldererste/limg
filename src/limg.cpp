@@ -1304,6 +1304,12 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
   bool canGrowLeft = left;
   bool canGrowRight = right;
 
+  if constexpr (!canGrowUpLeft)
+  {
+    canGrowUp = false;
+    canGrowLeft = false;
+  }
+
   limg_encode_3d_output<channels> decomp = pDecomp[ox + oy * pCtx->blockX];
 
   while (canGrowUp || canGrowDown || canGrowLeft || canGrowRight)
