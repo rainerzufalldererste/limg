@@ -15,7 +15,7 @@
 
 #include <type_traits>
 
-#define LIMG_SUCCESS(errorCode) (errorCode == fpR_Success)
+#define LIMG_SUCCESS(errorCode) (errorCode == limg_success)
 #define LIMG_FAILED(errorCode) (!(LIMG_SUCCESS(errorCode)))
 
 #define LIMG_ERROR_SET(errorCode) \
@@ -45,6 +45,12 @@ inline void limgFreePtr(T **ppData)
 
   *ppData = nullptr;
 }
+
+#ifdef _MSC_VER
+#define LIMG_ALIGN(bytes) __declspec(align(bytes))
+#else
+#define LIMG_ALIGN(bytes) __attribute__((aligned(bytes)))
+#endif
 
 template <typename T, typename U>
 constexpr inline auto limgMax(const T &a, const U &b) -> decltype(a > b ? a : b)
@@ -141,18 +147,28 @@ inline constexpr size_t LIMG_ARRAYSIZE(const T(&)[TCount]) { return TCount; }
 
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
+constexpr bool limg_IsDebug =
+#ifdef _DEBUG
+  true;
+#else
+  false;
+#endif
+
 constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
 constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
-constexpr bool limg_DiagnoseCulprits = false;
+constexpr bool limg_DiagnoseCulprits = limg_IsDebug;
+constexpr bool limg_ScaledBitsPerPixelOutput = false;
 
 struct limg_encode_context
 {
   const uint32_t *pSourceImage;
   uint32_t *pBlockInfo;
   size_t sizeX, sizeY;
+  size_t blockX, blockY;
+  void *pBlockColorDecompositions;
   size_t maxPixelBlockError, // maximum error of a single pixel when trying to fit pixels into blocks.
     maxBlockPixelError, // maximum average error of pixels per block when trying to fit them into blocks. (accum_err * 0xFF / (rangeX * rangeY))
     maxPixelChannelBlockError, // maximum error of a single pixel on a single channel when trying to fit pixels into blocks.
@@ -167,7 +183,13 @@ struct limg_encode_context
     culpritWasPixelChannelBlockError,
     culpritWasBlockExpandError,
     culpritWasPixelBitCrushError,
-    culpritWasBlockBitCrushError;
+    culpritWasBlockBitCrushError,
+    culpritWasFastBlockMergeAvgDiffError,
+    culpritWasFastBlockMergeRangeError,
+    culpritWasBlockExpandSizeMismatchError,
+    culpritWasBlockExpandValueMismatchError,
+    culpritWasLargeBlockMergeResultingBlockSizeError,
+    culpritWasSmallBlockMergeResultingBlockSizeError;
 };
 
 #define LIMG_PRECISE_DECOMPOSITION 2
@@ -427,178 +449,6 @@ static LIMG_INLINE void limg_init_color_error_state_3d(const limg_encode_3d_outp
   
   if (nonzero[2])
     state.inv_length_normalC = 1.f / limg_dot<float, channels>(state.normalC, state.normalC);
-}
-
-template <size_t channels>
-static LIMG_INLINE void limg_color_error_state_3d_get_factors(const limg_ui8_4 &color, const limg_encode_3d_output<channels> &in, const limg_color_error_state_3d<channels> &state, float &fac_a, float &fac_b, float &fac_c)
-{
-  float minAtoCol[channels];
-
-  for (size_t i = 0; i < channels; i++)
-    minAtoCol[i] = (float)(color[i] - in.dirA_min[i]);
-
-  const float facA = fac_a = limg_dot<float, channels>(minAtoCol, state.normalA) * state.inv_length_normalA;
-
-  float colEst[channels];
-  float minBToColADiff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    colEst[i] = ((float)in.dirA_min[i] + facA * state.normalA[i]);
-    minBToColADiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirB_offset[i];
-  }
-
-  const float facB = fac_b = limg_dot<float, channels>(minBToColADiff, state.normalB) * state.inv_length_normalB;
-
-  float minCToColBDiff[channels];
-
-  for (size_t i = 0; i < channels; i++)
-  {
-    colEst[i] = (colEst[i] + facB * state.normalB[i]);
-    minCToColBDiff[i] = ((float)color[i] - colEst[i]) - (float)in.dirC_offset[i];
-  }
-
-  const float facC = fac_c = limg_dot<float, channels>(minCToColBDiff, state.normalC) * state.inv_length_normalC;
-
-  (void)facC;
-}
-
-template <size_t channels>
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_(const limg_encode_context *, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
-{
-  const limg_ui8_4 *pLine = reinterpret_cast<const limg_ui8_4 *>(pPixels);
-
-  for (size_t i = 0; i < size; i++)
-  {
-    float a, b, c;
-
-    limg_color_error_state_3d_get_factors<channels>(pLine[i], decomposition, color_error_state, a, b, c);
-
-    *pAu8 = (uint8_t)limgClamp((int32_t)(a * (float_t)0xFF + 0.5f), 0, 0xFF);
-    *pBu8 = (uint8_t)limgClamp((int32_t)(b * (float_t)0xFF + 0.5f), 0, 0xFF);
-    *pCu8 = (uint8_t)limgClamp((int32_t)(c * (float_t)0xFF + 0.5f), 0, 0xFF);
-
-    pAu8++;
-    pBu8++;
-    pCu8++;
-  }
-}
-
-#ifndef _MSC_VER
-__attribute__((target("sse4.1")))
-#endif
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_3_sse41(const limg_encode_context *, const limg_encode_3d_output<3> &decomposition, const limg_color_error_state_3d<3> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
-{
-  _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
-
-  const __m128 dirA_min_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirA_min))));
-  const __m128 dirB_offset_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirB_offset))));
-  const __m128 dirC_offset_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirC_offset))));
-  const __m128 normalA_ = _mm_loadu_ps(color_error_state.normalA);
-  const __m128 normalB_ = _mm_loadu_ps(color_error_state.normalB);
-  const __m128 normalC_ = _mm_loadu_ps(color_error_state.normalC);
-  const __m128 inv_length_normalA_ = _mm_set1_ps(color_error_state.inv_length_normalA);
-  const __m128 inv_length_normalB_ = _mm_set1_ps(color_error_state.inv_length_normalB);
-  const __m128 inv_length_normalC_ = _mm_set1_ps(color_error_state.inv_length_normalC);
-  const __m128i hexFF_ = _mm_set1_epi32(0xFF);
-  const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
-
-  for (size_t i = 0; i < size; i++)
-  {
-    const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
-    const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
-
-    const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0x7F);
-    const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
-
-    // I've tried a bunch of variations, but this one appears to be the fastest way of doing this that I could come up with.
-    *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
-    pAu8++;
-
-    __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
-    const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
-
-    const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0x7F);
-    const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
-
-    *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
-    pBu8++;
-
-    colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
-    const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
-
-    const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0x7F);
-    const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
-
-    *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
-    pCu8++;
-  }
-}
-
-#ifndef _MSC_VER
-__attribute__((target("sse4.1")))
-#endif
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors_4_sse41(const limg_encode_context *, const limg_encode_3d_output<4> &decomposition, const limg_color_error_state_3d<4> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
-{
-  _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
-
-  const __m128 dirA_min_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirA_min))));
-  const __m128 dirB_offset_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirB_offset))));
-  const __m128 dirC_offset_ = _mm_cvtepi32_ps(_mm_cvtepi16_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(decomposition.dirC_offset))));
-  const __m128 normalA_ = _mm_loadu_ps(color_error_state.normalA);
-  const __m128 normalB_ = _mm_loadu_ps(color_error_state.normalB);
-  const __m128 normalC_ = _mm_loadu_ps(color_error_state.normalC);
-  const __m128 inv_length_normalA_ = _mm_set1_ps(color_error_state.inv_length_normalA);
-  const __m128 inv_length_normalB_ = _mm_set1_ps(color_error_state.inv_length_normalB);
-  const __m128 inv_length_normalC_ = _mm_set1_ps(color_error_state.inv_length_normalC);
-  const __m128i hexFF_ = _mm_set1_epi32(0xFF);
-  const __m128 hexFF_ps = _mm_set1_ps((float)0xFF);
-
-  for (size_t i = 0; i < size; i++)
-  {
-    const __m128 color_ = _mm_cvtepi32_ps(_mm_cvtepu8_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&pPixels[i]))));
-    const __m128 minAtoCol = _mm_sub_ps(color_, dirA_min_);
-
-    const __m128 dotA = _mm_dp_ps(minAtoCol, normalA_, 0xFF);
-    const __m128 facA = _mm_mul_ps(_mm_shuffle_ps(dotA, dotA, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalA_);
-
-    *pAu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facA)))), 0);
-    pAu8++;
-
-    __m128 colEst = _mm_add_ps(dirA_min_, _mm_mul_ps(normalA_, facA));
-    const __m128 minBtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirB_offset_);
-
-    const __m128 dotB = _mm_dp_ps(minBtoCol, normalB_, 0xFF);
-    const __m128 facB = _mm_mul_ps(_mm_shuffle_ps(dotB, dotB, _MM_SHUFFLE(0, 0, 0, 0)), inv_length_normalB_);
-
-    *pBu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facB)))), 0);
-    pBu8++;
-
-    colEst = _mm_add_ps(colEst, _mm_mul_ps(normalB_, facB));
-    const __m128 minCtoCol = _mm_sub_ps(_mm_sub_ps(color_, colEst), dirC_offset_);
-
-    const __m128 dotC = _mm_dp_ps(minCtoCol, normalC_, 0xFF);
-    const __m128 facC = _mm_mul_ps(dotC, inv_length_normalC_);
-
-    *pCu8 = (uint8_t)_mm_extract_epi8(_mm_max_epi32(_mm_setzero_si128(), _mm_min_epi32(hexFF_, _mm_cvtps_epi32(_mm_mul_ps(hexFF_ps, facC)))), 0);
-    pCu8++;
-  }
-}
-
-template <size_t channels>
-LIMG_INLINE void limg_color_error_state_3d_get_all_factors(const limg_encode_context *pCtx, const limg_encode_3d_output<channels> &decomposition, const limg_color_error_state_3d<channels> &color_error_state, const uint32_t *pPixels, const size_t size, uint8_t *pAu8, uint8_t *pBu8, uint8_t *pCu8)
-{
-  if (sse41Supported)
-  {
-    if constexpr (channels == 3)
-      limg_color_error_state_3d_get_all_factors_3_sse41(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
-    else
-      limg_color_error_state_3d_get_all_factors_4_sse41(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
-  }
-  else
-  {
-    limg_color_error_state_3d_get_all_factors_(pCtx, decomposition, color_error_state, pPixels, size, pAu8, pBu8, pCu8);
-  }
 }
 
 template <size_t channels>
