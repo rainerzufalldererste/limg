@@ -160,6 +160,7 @@ constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
 constexpr bool limg_DiagnoseCulprits = limg_IsDebug;
+constexpr bool limg_ScaledBitsPerPixelOutput = false;
 
 struct limg_encode_context
 {
