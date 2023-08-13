@@ -147,12 +147,19 @@ inline constexpr size_t LIMG_ARRAYSIZE(const T(&)[TCount]) { return TCount; }
 
 constexpr uint32_t BlockInfo_InUse = (uint32_t)((uint32_t)1 << 31);
 
+constexpr bool limg_IsDebug =
+#ifdef _DEBUG
+  true;
+#else
+  false;
+#endif
+
 constexpr size_t limg_BlockExpandStep = 2; // must be a power of two.
 constexpr size_t limg_MinBlockSize = limg_BlockExpandStep * 4;
 constexpr bool limg_ColorDependentBlockError = true;
 constexpr bool limg_LuminanceDependentPixelError = false;
 constexpr bool limg_ColorDependentABError = true;
-constexpr bool limg_DiagnoseCulprits = true;
+constexpr bool limg_DiagnoseCulprits = limg_IsDebug;
 
 struct limg_encode_context
 {

@@ -1387,7 +1387,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d_expand(limg_encode_context *
   return true;
 }
 
-template <size_t channels>
+template <size_t channels, bool acceptTinyBlocks>
 bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, limg_encode_3d_output<channels> *pDecomp, size_t &staticX, size_t &staticY, size_t *pOffsetX, size_t *pOffsetY, size_t *pRangeX, size_t *pRangeY, limg_encode_3d_output<channels> &decomp)
 {
   size_t ox = staticX;
@@ -1421,32 +1421,52 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
 
       limg_encode_3d_output<channels> sDecomp = decomp;
 
-      if (rx >= 3 && ry >= 3) // let's try expanding from the center third.
+      if constexpr (!acceptTinyBlocks)
       {
-        *pOffsetX = ox + rx / 3;
-        *pOffsetY = oy + ry / 3;
-        *pRangeX = rx / 3;
-        *pRangeY = ry / 3;
-
-        if (limg_encode_find_block_3d_expand<channels, true>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp) && *pRangeX * *pRangeY > rx * ry)
+        if (rx >= 3 && ry >= 3) // let's try expanding from the center third.
         {
-          staticX = ox;
+          *pOffsetX = ox + rx / 3;
+          *pOffsetY = oy + ry / 3;
+          *pRangeX = rx / 3;
+          *pRangeY = ry / 3;
+
+          if (limg_encode_find_block_3d_expand<channels, true>(pCtx, pDecomp, pOffsetX, pOffsetY, pRangeX, pRangeY, true, true, true, true, decomp) && *pRangeX * *pRangeY > rx * ry)
+          {
+            staticX = ox;
+            staticY = oy;
+
+            return true;
+          }
+
+          *pOffsetX = ox;
+          *pOffsetY = oy;
+          *pRangeX = rx;
+          *pRangeY = ry;
+
+          staticX = ox + rx;
           staticY = oy;
+
+          decomp = sDecomp;
 
           return true;
         }
+      }
+      else
+      {
+        if (rx > 1 || ry > 1) // do we want to reject terrible matches? not sure.
+        {
+          *pOffsetX = ox;
+          *pOffsetY = oy;
+          *pRangeX = rx;
+          *pRangeY = ry;
 
-        *pOffsetX = ox;
-        *pOffsetY = oy;
-        *pRangeX = rx;
-        *pRangeY = ry;
+          staticX = ox + rx;
+          staticY = oy;
 
-        staticX = ox + rx;
-        staticY = oy;
+          decomp = sDecomp;
 
-        decomp = sDecomp;
-
-        return true;
+          return true;
+        }
       }
     }
 
@@ -1708,14 +1728,28 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
   {
     size_t blockFindStaticX = 0;
     size_t blockFindStaticY = 0;
+    bool allowTinyBlocks = false;
 
     while (true)
     {
       size_t ox, oy, rx, ry;
       limg_encode_3d_output<channels> decomp;
 
-      if (!limg_encode_find_block_3d(pCtx, pDecomposition, blockFindStaticX, blockFindStaticY, &ox, &oy, &rx, &ry, decomp))
-        break;
+      if (!allowTinyBlocks) // TODO: Move this to separate functions.
+      {
+        if (!limg_encode_find_block_3d<channels, false>(pCtx, pDecomposition, blockFindStaticX, blockFindStaticY, &ox, &oy, &rx, &ry, decomp))
+        {
+          blockFindStaticX = 0;
+          blockFindStaticY = 0;
+          allowTinyBlocks = true;
+          continue;
+        }
+      }
+      else
+      {
+        if (!limg_encode_find_block_3d<channels, true>(pCtx, pDecomposition, blockFindStaticX, blockFindStaticY, &ox, &oy, &rx, &ry, decomp))
+          break;
+      }
 
       blockIndex++;
 
