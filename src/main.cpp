@@ -204,7 +204,7 @@ int32_t main(const int32_t argc, const char **pArgv)
     }
 
     uint32_t *pShift = nullptr;
-    uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr, *pBlockError = nullptr;
+    uint8_t *pFactorsA = nullptr, *pFactorsB = nullptr, *pFactorsC = nullptr, *pBlockError = nullptr, *pBitsPerPixel = nullptr;
     uint32_t *pColAMin = nullptr, *pColAMax = nullptr, *pColBMin = nullptr, *pColBMax = nullptr, *pColCMin = nullptr, *pColCMax = nullptr, *pBlockIndex = nullptr;
 
     // Allocate space for a, b, factors, blockError.
@@ -214,6 +214,7 @@ int32_t main(const int32_t argc, const char **pArgv)
       pFactorsB = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pFactorsC = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pBlockError = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
+      pBitsPerPixel = reinterpret_cast<uint8_t *>(calloc(sizeX * sizeY, sizeof(uint8_t)));
       pShift = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColAMin = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
       pColAMax = reinterpret_cast<uint32_t *>(calloc(sizeX * sizeY, sizeof(uint32_t)));
@@ -235,7 +236,7 @@ int32_t main(const int32_t argc, const char **pArgv)
     {
       const int64_t before = CurrentTimeNs();
 
-      const limg_result result = limg_encode3d_blocked_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+      const limg_result result = limg_encode3d_blocked_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
 
       const int64_t after = CurrentTimeNs();
 
@@ -341,6 +342,7 @@ int32_t main(const int32_t argc, const char **pArgv)
       stbi_write_tga("limg_fac_a.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsA);
       stbi_write_tga("limg_fac_b.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsB);
       stbi_write_tga("limg_fac_c.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pFactorsC);
+      stbi_write_tga("limg_bpp.tga", (int32_t)sizeX, (int32_t)sizeY, 1, pBitsPerPixel);
       stbi_write_tga("limg_bits.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pShift);
       stbi_write_tga("limg_col_a_min.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMin);
       stbi_write_tga("limg_col_a_max.tga", (int32_t)sizeX, (int32_t)sizeY, 4, pColAMax);

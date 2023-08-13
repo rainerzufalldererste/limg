@@ -1496,7 +1496,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
 }
 
 template <size_t channels>
-void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, uint32_t *pPixels, const limg_encode_3d_output<channels> &decomposition, const size_t ox, const size_t oy, const size_t rx, const size_t ry, float *pScratch, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, size_t accum_bits[3 + 3 * 8], uint64_t &ditherLast, const uint32_t blockIndex)
+void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, uint32_t *pPixels, const limg_encode_3d_output<channels> &decomposition, const size_t ox, const size_t oy, const size_t rx, const size_t ry, float *pScratch, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, uint8_t *pBitsPerPixel, size_t accum_bits[3 + 3 * 8], uint64_t &ditherLast, const uint32_t blockIndex)
 {
   const size_t rangeSize = rx * ry;
 
@@ -1604,7 +1604,7 @@ void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, ui
     uint32_t colCMin = 0;
     uint32_t colCMax = 0;
 
-    uint8_t channelOffset[4] = { 0, 8, 16, 24 };
+    const uint8_t channelOffset[4] = { 0, 8, 16, 24 };
 
     for (size_t i = 0; i < channels; i++)
     {
@@ -1626,11 +1626,17 @@ void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, ui
       colCMax |= 0xFF000000;
     }
 
+    constexpr size_t staticPessimisticBlockBits = (channels * (CHAR_BIT + 1) * 2 + channels * CHAR_BIT + 4 * sizeof(uint32_t) * CHAR_BIT); // 206 (3) or 232 (4 channels).
+    const size_t pixelBits = rangeSize * ((8 - shift[0]) + (8 - shift[1]) + (8 - shift[2])); // if limg_MinBlockSize == 8: n >= 1536 (corners: >= 24)
+    const size_t bits = staticPessimisticBlockBits + pixelBits;
+    const uint8_t bitsPerPixel = (uint8_t)((bits + rangeSize / 2 /* rounding! */) / rangeSize); // would be 256 if only one pixel that needed 8 bits to be represented, but that's impossible, as then the base factor would suffice and 0 bits would be needed to represent the pixel itself.
+
     for (size_t offsetY = 0; offsetY < ry; offsetY++)
     {
       uint8_t *pFactorsALine = pFactorsA + (oy + offsetY) * pCtx->sizeX + ox;
       uint8_t *pFactorsBLine = pFactorsB + (oy + offsetY) * pCtx->sizeX + ox;
       uint8_t *pFactorsCLine = pFactorsC + (oy + offsetY) * pCtx->sizeX + ox;
+      uint8_t *pBitsPerPixelLine = pBitsPerPixel + (oy + offsetY) * pCtx->sizeX + ox;
       uint32_t *pShiftLine = pShiftABCX + (oy + offsetY) * pCtx->sizeX + ox;
       uint32_t *pColAMinLine = pColAMin + (oy + offsetY) * pCtx->sizeX + ox;
       uint32_t *pColAMaxLine = pColAMax + (oy + offsetY) * pCtx->sizeX + ox;
@@ -1653,6 +1659,9 @@ void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, ui
         *pFactorsCLine = *pCu8 << shift[2];
         pFactorsCLine++;
         pCu8++;
+
+        *pBitsPerPixelLine = (bitsPerPixel > (CHAR_BIT * channels) && (offsetX == 0 || offsetY == 0 || offsetX == rx - 1 || offsetY == ry - 1)) ? 0xFF : bitsPerPixel;
+        pBitsPerPixelLine++;
 
         *pShiftLine = shift_val;
         pShiftLine++;
@@ -1695,9 +1704,58 @@ void limg_encode3d_encode_block_from_decomposition(limg_encode_context *pCtx, ui
   (void)pBlockError;
 }
 
-template <size_t channels>
-limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
+template <size_t channels, bool keepDecomposition>
+limg_result limg_encode_region_from_3d_output(limg_encode_context *pCtx, const size_t ox, const size_t oy, const size_t rx, const size_t ry, const limg_encode_3d_output<channels> &decomp, uint32_t **ppPixels, size_t *pPixelCapacity, float **ppScratch, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, uint8_t *pBitsPerPixel, size_t accum_bits[3 + 3 * 8], uint64_t &ditherLast, const uint32_t blockIndex)
 {
+  limg_result result = limg_success;
+
+  size_t x_px = rx * limg_MinBlockSize;
+  size_t y_px = ry * limg_MinBlockSize;
+
+  if (ox + rx == pCtx->blockX)
+    x_px = x_px - limg_MinBlockSize + (pCtx->sizeX % limg_MinBlockSize);
+
+  if (oy + ry == pCtx->blockY)
+    y_px = y_px - limg_MinBlockSize + (pCtx->sizeY % limg_MinBlockSize);
+
+  const size_t rangeSize = x_px * y_px;
+
+  if (rangeSize > *pPixelCapacity)
+  {
+    *ppPixels = reinterpret_cast<uint32_t *>(realloc(*ppPixels, rangeSize * sizeof(uint32_t)));
+    *ppScratch = reinterpret_cast<float *>(realloc(*ppScratch, rangeSize * 4 * sizeof(float)));
+    *pPixelCapacity = rangeSize;
+
+    LIMG_ERROR_IF(*ppPixels == nullptr || *ppScratch == nullptr, limg_error_MemoryAllocationFailure);
+  }
+
+  for (size_t yy = 0; yy < y_px; yy++)
+    memcpy(*ppPixels + yy * x_px, pCtx->pSourceImage + (oy * limg_MinBlockSize + yy) * pCtx->sizeX + ox * limg_MinBlockSize, x_px * sizeof(uint32_t));
+
+  limg_encode_decomposition_state encode_state;
+  limg_encode_sum_to_decomposition_state<channels>(pCtx, *ppPixels, rangeSize, encode_state);
+
+  if constexpr (!keepDecomposition)
+  {
+    limg_encode_3d_output<channels> decomposition;
+    limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, *ppPixels, rangeSize, decomposition, encode_state, *ppScratch);
+
+    limg_encode3d_encode_block_from_decomposition<channels>(pCtx, *ppPixels, decomposition, ox * limg_MinBlockSize, oy * limg_MinBlockSize, x_px, y_px, *ppScratch, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, accum_bits, ditherLast, blockIndex);
+  }
+  else
+  {
+    limg_encode3d_encode_block_from_decomposition<channels>(pCtx, *ppPixels, decomp, ox * limg_MinBlockSize, oy * limg_MinBlockSize, x_px, y_px, *ppScratch, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, ditherLast, blockIndex);
+  }
+
+epilogue:
+  return limg_success;
+}
+
+template <size_t channels>
+limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, uint8_t *pBitsPerPixel, size_t accum_bits[3 + 3 * 8], limg_thread_pool *pThreadPool)
+{
+  limg_result result = limg_success;
+
   if (pThreadPool == nullptr)
   {
     limg_encode3d_blocked_test_y_range<channels>(pCtx, 0, pCtx->sizeY);
@@ -1736,9 +1794,6 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
   size_t pixelCapacity = 0;
   uint64_t ditherLast = 0xCA7F00D15BADF00D;
   uint32_t blockIndex = 0;
-  const size_t numBlocks = pCtx->blockX * pCtx->blockY;
-  (void)numBlocks;
-  size_t consumedBlocks = 0;
 
   // Attempt to Merge Blocks.
   {
@@ -1774,50 +1829,15 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
         for (size_t x = ox; x < ox + rx; x++)
           pCtx->pBlockInfo[x + y * pCtx->blockX] = BlockInfo_InUse;
 
-      consumedBlocks += ry * rx;
-
-      size_t x_px = rx * limg_MinBlockSize;
-      size_t y_px = ry * limg_MinBlockSize;
-
-      if (ox + rx == pCtx->blockX)
-        x_px = x_px - limg_MinBlockSize + (pCtx->sizeX % limg_MinBlockSize);
-
-      if (oy + ry == pCtx->blockY)
-        y_px = y_px - limg_MinBlockSize + (pCtx->sizeY % limg_MinBlockSize);
-
-      const size_t rangeSize = x_px * y_px;
-
-      if (rangeSize > pixelCapacity)
-      {
-        pPixels = reinterpret_cast<uint32_t *>(realloc(pPixels, rangeSize * sizeof(uint32_t)));
-        pScratch = reinterpret_cast<float *>(realloc(pScratch, rangeSize * 4 * sizeof(float)));
-        pixelCapacity = rangeSize;
-
-        if (pPixels == nullptr || pScratch == nullptr)
-        {
-          free(pPixels);
-          free(pScratch);
-          return limg_error_MemoryAllocationFailure;
-        }
-      }
-
-      for (size_t yy = 0; yy < y_px; yy++)
-        memcpy(pPixels + yy * x_px, pCtx->pSourceImage + (oy * limg_MinBlockSize + yy) * pCtx->sizeX + ox * limg_MinBlockSize, x_px * sizeof(uint32_t));
-
-      limg_encode_decomposition_state encode_state;
-      limg_encode_sum_to_decomposition_state<channels>(pCtx, pPixels, rangeSize, encode_state);
-
-      limg_encode_3d_output<channels> decomposition;
-      limg_encode_get_block_factors_accurate_from_state_3d<channels>(pCtx, pPixels, rangeSize, decomposition, encode_state, pScratch);
-
-      limg_encode3d_encode_block_from_decomposition<channels>(pCtx, pPixels, decomposition, ox * limg_MinBlockSize, oy * limg_MinBlockSize, x_px, y_px, pScratch, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, ditherLast, blockIndex);
+      LIMG_ERROR_CHECK((limg_encode_region_from_3d_output<channels, false>(pCtx, ox, oy, rx, ry, decomp, &pPixels, &pixelCapacity, &pScratch, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, accum_bits, ditherLast, blockIndex)));
     }
   }
-
+  
+epilogue:
   free(pPixels);
   free(pScratch);
 
-  return limg_success;
+  return result;
 }
 
 template <size_t channels, bool store_factors_shift, bool decode, bool store_accum_bits>
@@ -2262,7 +2282,7 @@ epilogue:
   return result;
 }
 
-limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
+limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, const size_t sizeY, uint32_t *pDecoded, uint8_t *pFactorsA, uint8_t *pFactorsB, uint8_t *pFactorsC, uint32_t *pShiftABCX, uint32_t *pColAMin, uint32_t *pColAMax, uint32_t *pColBMin, uint32_t *pColBMax, uint32_t *pColCMin, uint32_t *pColCMax, uint32_t *pBlockIndex, uint8_t *pBlockError, uint8_t *pBitsPerPixel, const bool hasAlpha, const uint32_t errorFactor, limg_thread_pool *pThreadPool, const bool fastBitCrushing)
 {
   limg_result result = limg_success;
 
@@ -2323,9 +2343,9 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
   size_t accum_bits[3 + 3 * 9] = { 0 };
 
   if (ctx.hasAlpha)
-    LIMG_ERROR_CHECK(limg_encode3d_blocked_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, pThreadPool));
+    LIMG_ERROR_CHECK(limg_encode3d_blocked_test_<4>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, accum_bits, pThreadPool));
   else
-    LIMG_ERROR_CHECK(limg_encode3d_blocked_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, accum_bits, pThreadPool));
+    LIMG_ERROR_CHECK(limg_encode3d_blocked_test_<3>(&ctx, pDecoded, pFactorsA, pFactorsB, pFactorsC, pShiftABCX, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, accum_bits, pThreadPool));
 
 #ifdef PRINT_TEST_OUTPUT
   const size_t totalPixels = ctx.sizeX * ctx.sizeY;
