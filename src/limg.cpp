@@ -1725,10 +1725,20 @@ limg_result limg_encode_region_from_3d_output(limg_encode_context *pCtx, const s
   size_t y_px = ry * limg_MinBlockSize;
 
   if (ox + rx == pCtx->blockX)
-    x_px = x_px - limg_MinBlockSize + (pCtx->sizeX % limg_MinBlockSize);
+  {
+    const size_t fitX = (pCtx->sizeX % limg_MinBlockSize);
+
+    if (fitX)
+      x_px = x_px - limg_MinBlockSize + fitX;
+  }
 
   if (oy + ry == pCtx->blockY)
-    y_px = y_px - limg_MinBlockSize + (pCtx->sizeY % limg_MinBlockSize);
+  {
+    const size_t fitY = (pCtx->sizeY % limg_MinBlockSize);
+
+    if (fitY)
+      y_px = y_px - limg_MinBlockSize + fitY;
+  }
 
   const size_t rangeSize = x_px * y_px;
 
