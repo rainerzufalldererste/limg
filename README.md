@@ -7,7 +7,7 @@ limg is an experimental (and very much work in progress) lossy raster image code
 ## How does it work?
 limg breaks the image up into blocks and calculates three linear factors the colors in this block consists of.
 
-We then try to expand those blocks into blocks of similar color, and if possible, recalculate a better matching linear factor decomposition. For the image above we end up with the following factors:
+We then try to expand those blocks into areas of similar color, and recalculate a better matching linear factor decomposition for the combined area. For the image above we end up with the following areas:
 ![limg - Blocks](https://raw.githubusercontent.com/rainerzufalldererste/limg/master/assets/block.png)
 
 For the image above, the first linear factor would be the colors between these two extremes:
