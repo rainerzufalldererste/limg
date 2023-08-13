@@ -1185,7 +1185,7 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_3d_matches_sse2(limg_encode_context *pCtx,
     }
   }
 
-  constexpr float maxRatio = 1.8f;
+  constexpr float maxRatio = 1.375f;
 
   if (sumLenRatio > maxRatio || sumLenRatio < (1.f / maxRatio))
   {

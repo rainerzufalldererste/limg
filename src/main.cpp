@@ -80,7 +80,7 @@ static const char Arg_ListCount[] = "--count";
 static const char Arg_List[] = "--";
 
 static bool _WriteEncodedImages = true;
-static uint32_t _ErrorFactor = 4;
+static uint32_t _ErrorFactor = 100;
 static bool _FastBitCrushing = true;
 static bool _UseThreadPool = true;
 static size_t _ListCount = 1;
