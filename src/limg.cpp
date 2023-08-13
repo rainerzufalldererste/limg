@@ -1450,6 +1450,14 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
 
           return true;
         }
+        else
+        {
+          if constexpr (limg_DiagnoseCulprits)
+          {
+            pCtx->culprits++;
+            pCtx->culpritWasLargeBlockMergeResultingBlockSizeError++;
+          }
+        }
       }
       else
       {
@@ -1466,6 +1474,14 @@ bool LIMG_DEBUG_NO_INLINE limg_encode_find_block_3d(limg_encode_context *pCtx, l
           decomp = sDecomp;
 
           return true;
+        }
+        else
+        {
+          if constexpr (limg_DiagnoseCulprits)
+          {
+            pCtx->culprits++;
+            pCtx->culpritWasSmallBlockMergeResultingBlockSizeError++;
+          }
         }
       }
     }
@@ -1739,6 +1755,7 @@ limg_result limg_encode3d_blocked_test_(limg_encode_context *pCtx, uint32_t *pDe
       {
         if (!limg_encode_find_block_3d<channels, false>(pCtx, pDecomposition, blockFindStaticX, blockFindStaticY, &ox, &oy, &rx, &ry, decomp))
         {
+          // Do another pass over all blocks and try to find tiny blocks within the cracks.
           blockFindStaticX = 0;
           blockFindStaticY = 0;
           allowTinyBlocks = true;
@@ -2340,6 +2357,9 @@ limg_result limg_encode3d_blocked_test(const uint32_t *pIn, const size_t sizeX, 
     puts("-- Fast Block Merge ----------------------------------");
     printf("FastMergeAvgDiffError : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasFastBlockMergeAvgDiffError, (ctx.culpritWasFastBlockMergeAvgDiffError / (double)ctx.culprits) * 100.0, (ctx.culpritWasFastBlockMergeAvgDiffError / (double)(ctx.culpritWasFastBlockMergeAvgDiffError + ctx.culpritWasFastBlockMergeRangeError)) * 100.0);
     printf("FastMergeRangeError   : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasFastBlockMergeRangeError, (ctx.culpritWasFastBlockMergeRangeError / (double)ctx.culprits) * 100.0, (ctx.culpritWasFastBlockMergeRangeError / (double)(ctx.culpritWasFastBlockMergeAvgDiffError + ctx.culpritWasFastBlockMergeRangeError)) * 100.0);
+    puts("-- Block Search --------------------------------------");
+    printf("BlockSizeRejectLarge  : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasLargeBlockMergeResultingBlockSizeError, (ctx.culpritWasLargeBlockMergeResultingBlockSizeError / (double)ctx.culprits) * 100.0, (ctx.culpritWasLargeBlockMergeResultingBlockSizeError / (double)(ctx.culpritWasLargeBlockMergeResultingBlockSizeError + ctx.culpritWasSmallBlockMergeResultingBlockSizeError)) * 100.0);
+    printf("BlockSizeRejectSmall  : %8" PRIu64 " (%7.3f%% / %7.3f%%)\n", ctx.culpritWasSmallBlockMergeResultingBlockSizeError, (ctx.culpritWasSmallBlockMergeResultingBlockSizeError / (double)ctx.culprits) * 100.0, (ctx.culpritWasSmallBlockMergeResultingBlockSizeError / (double)(ctx.culpritWasLargeBlockMergeResultingBlockSizeError + ctx.culpritWasSmallBlockMergeResultingBlockSizeError)) * 100.0);
     puts("");
   }
 

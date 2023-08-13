@@ -186,7 +186,9 @@ struct limg_encode_context
     culpritWasFastBlockMergeAvgDiffError,
     culpritWasFastBlockMergeRangeError,
     culpritWasBlockExpandSizeMismatchError,
-    culpritWasBlockExpandValueMismatchError;
+    culpritWasBlockExpandValueMismatchError,
+    culpritWasLargeBlockMergeResultingBlockSizeError,
+    culpritWasSmallBlockMergeResultingBlockSizeError;
 };
 
 #define LIMG_PRECISE_DECOMPOSITION 2
