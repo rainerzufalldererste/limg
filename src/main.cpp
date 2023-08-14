@@ -236,7 +236,23 @@ int32_t main(const int32_t argc, const char **pArgv)
     {
       const int64_t before = CurrentTimeNs();
 
-      const limg_result result = limg_encode3d_blocked_test(pSourceImage, sizeX, sizeY, pTargetImage, pFactorsA, pFactorsB, pFactorsC, pShift, pColAMin, pColAMax, pColBMin, pColBMax, pColCMin, pColCMax, pBlockIndex, pBlockError, pBitsPerPixel, hasAlpha, _ErrorFactor, pThreadPool, _FastBitCrushing);
+      limg_blocked_encode3d_info info;
+      info.pBitsPerPixel = pBitsPerPixel;
+      info.pBlockError = pBlockError;
+      info.pBlockIndex = pBlockIndex;
+      info.pColAMax = pColAMax;
+      info.pColAMin = pColAMin;
+      info.pColBMax = pColBMax;
+      info.pColBMin = pColBMin;
+      info.pColCMax = pColCMax;
+      info.pColCMin = pColCMin;
+      info.pDecoded = pTargetImage;
+      info.pFactorsA = pFactorsA;
+      info.pFactorsB = pFactorsB;
+      info.pFactorsC = pFactorsC;
+      info.pShiftABCX = pShift;
+
+      const limg_result result = limg_blocked_encode3d_test(pSourceImage, sizeX, sizeY, hasAlpha, &info, _ErrorFactor, pThreadPool, _FastBitCrushing);
 
       const int64_t after = CurrentTimeNs();
 

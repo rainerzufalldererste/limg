@@ -701,4 +701,15 @@ LIMG_INLINE int16_t limg_fast_floor_int16(const float in)
   return (int16_t)(in + 256.f) - 256;
 }
 
+//////////////////////////////////////////////////////////////////////////
+
+struct limg_blocked_encode3d_local_data
+{
+  uint32_t *pPixels = nullptr;
+  float *pScratch = nullptr;
+  size_t pixelCapacity = 0;
+  uint64_t ditherLast = 0xCA7F00D15BADF00D;
+  uint32_t blockIndex = 0;
+};
+
 #endif // limg_internal_h__
