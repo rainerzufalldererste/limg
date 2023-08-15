@@ -72,50 +72,66 @@ uint64_t ParseUInt(const char *text)
   return ret;
 }
 
-inline void inplace_diffenc_8(uint8_t *pBuffer)
+inline void inplace_dctdec_8(float *pBuffer)
 {
-  for (size_t j = 1; j < 7; j++)
-    for (size_t i = 7; i >= j; i--)
-      pBuffer[i] -= pBuffer[i - 1];
+  constexpr float C_a = 1.3870398453221474618216191915664f;  // sqrt(2) * cos(1 * pi / 16)
+  constexpr float C_b = 1.3065629648763765278566431734272f;  // sqrt(2) * cos(2 * pi / 16)
+  constexpr float C_c = 1.1758756024193587169744671046113f;  // sqrt(2) * cos(3 * pi / 16)
+  constexpr float C_d = 0.78569495838710218127789736765722f; // sqrt(2) * cos(5 * pi / 16)
+  constexpr float C_e = 0.54119610014619698439972320536639f; // sqrt(2) * cos(6 * pi / 16)
+  constexpr float C_f = 0.27589937928294301233595756366937f; // sqrt(2) * cos(7 * pi / 16)
+  constexpr float C_norm = 0.35355339059327376220042218105242f; // 1 / sqrt(8)    
+
+  const float x07p = pBuffer[0] + pBuffer[7];
+  const float x16p = pBuffer[1] + pBuffer[6];
+  const float x25p = pBuffer[2] + pBuffer[5];
+  const float x34p = pBuffer[3] + pBuffer[4];
+
+  const float x07m = pBuffer[0] - pBuffer[7];
+  const float x61m = pBuffer[6] - pBuffer[1];
+  const float x25m = pBuffer[2] - pBuffer[5];
+  const float x43m = pBuffer[4] - pBuffer[3];
+
+  const float x07p34pp = x07p + x34p;
+  const float x07p34pm = x07p - x34p;
+  const float x16p25pp = x16p + x25p;
+  const float x16p25pm = x16p - x25p;
+
+  pBuffer[0] = C_norm * (x07p34pp + x16p25pp);
+  pBuffer[2] = C_norm * (C_b * x07p34pm + C_e * x16p25pm);
+  pBuffer[4] = C_norm * (x07p34pp - x16p25pp);
+  pBuffer[6] = C_norm * (C_e * x07p34pm - C_b * x16p25pm);
+
+  pBuffer[1] = C_norm * (C_a * x07m - C_c * x61m + C_d * x25m - C_f * x43m);
+  pBuffer[3] = C_norm * (C_c * x07m + C_f * x61m - C_a * x25m + C_d * x43m);
+  pBuffer[5] = C_norm * (C_d * x07m + C_a * x61m + C_f * x25m - C_c * x43m);
+  pBuffer[7] = C_norm * (C_f * x07m + C_d * x61m + C_c * x25m + C_a * x43m);
 }
 
-void diffenc_8x8(uint8_t *pBuffer)
+void dctdec_8x8(uint8_t *pBuffer)
 {
+  constexpr float div = 1.f / 255.f;
+  constexpr float mul = 255.f;
+  float b[64];
+
+  for (size_t i = 0; i < 64; i++)
+    b[i] = (float)pBuffer[i] * div;
+
   // encode.
   for (size_t i = 0; i < 8; i++)
-    inplace_diffenc_8(pBuffer + i * 8);
+    inplace_dctdec_8(b + i * 8);
 
   // swap.
   for (size_t i = 0; i < 8; i++)
     for (size_t j = i + 1; j < 8; j++)
-      std::swap(pBuffer[j + i * 8], pBuffer[i + j * 8]);
+      std::swap(b[j + i * 8], b[i + j * 8]);
 
   // encode.
   for (size_t i = 0; i < 8; i++)
-    inplace_diffenc_8(pBuffer + i * 8);
-}
+    inplace_dctdec_8(b + i * 8);
 
-inline void inplace_diffdec_8(uint8_t *pBuffer)
-{
-  for (size_t j = 6; j >= 1; j--)
-    for (size_t i = j; i < 8; i++)
-      pBuffer[i] += pBuffer[i - 1];
-}
-
-void diffdec_8x8(uint8_t *pBuffer)
-{
-  // encode.
-  for (size_t i = 0; i < 8; i++)
-    inplace_diffdec_8(pBuffer + i * 8);
-
-  // swap.
-  for (size_t i = 0; i < 8; i++)
-    for (size_t j = i + 1; j < 8; j++)
-      std::swap(pBuffer[j + i * 8], pBuffer[i + j * 8]);
-
-  // encode.
-  for (size_t i = 0; i < 8; i++)
-    inplace_diffdec_8(pBuffer + i * 8);
+  for (size_t i = 0; i < 64; i++)
+    pBuffer[i] = (uint8_t)max(min((int32_t)roundf(b[i] * mul) + 127, 0xFF), 0);
 }
 
 static const char Arg_NoWrite[] = "--no-output";
@@ -138,12 +154,10 @@ int32_t main(const int32_t argc, const char **pArgv)
 
   for (size_t i = 0; i < 64; i++)
   {
-    for (size_t j = 0; j < 64; j++)
-      buf[j] = 0;
+    memset(buf, 0, sizeof(buf));
+    buf[i] = 255;
 
-    buf[i] = 127;
-
-    diffdec_8x8(buf);
+    dctdec_8x8(buf);
 
     memcpy(total + 64 * i, buf, 64);
   }
