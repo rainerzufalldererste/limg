@@ -72,6 +72,52 @@ uint64_t ParseUInt(const char *text)
   return ret;
 }
 
+inline void inplace_diffenc_8(uint8_t *pBuffer)
+{
+  for (size_t j = 1; j < 7; j++)
+    for (size_t i = 7; i >= j; i--)
+      pBuffer[i] -= pBuffer[i - 1];
+}
+
+void diffenc_8x8(uint8_t *pBuffer)
+{
+  // encode.
+  for (size_t i = 0; i < 8; i++)
+    inplace_diffenc_8(pBuffer + i * 8);
+
+  // swap.
+  for (size_t i = 0; i < 8; i++)
+    for (size_t j = i + 1; j < 8; j++)
+      std::swap(pBuffer[j + i * 8], pBuffer[i + j * 8]);
+
+  // encode.
+  for (size_t i = 0; i < 8; i++)
+    inplace_diffenc_8(pBuffer + i * 8);
+}
+
+inline void inplace_diffdec_8(uint8_t *pBuffer)
+{
+  for (size_t j = 6; j >= 1; j--)
+    for (size_t i = j; i < 8; i++)
+      pBuffer[i] += pBuffer[i - 1];
+}
+
+void diffdec_8x8(uint8_t *pBuffer)
+{
+  // encode.
+  for (size_t i = 0; i < 8; i++)
+    inplace_diffdec_8(pBuffer + i * 8);
+
+  // swap.
+  for (size_t i = 0; i < 8; i++)
+    for (size_t j = i + 1; j < 8; j++)
+      std::swap(pBuffer[j + i * 8], pBuffer[i + j * 8]);
+
+  // encode.
+  for (size_t i = 0; i < 8; i++)
+    inplace_diffdec_8(pBuffer + i * 8);
+}
+
 static const char Arg_NoWrite[] = "--no-output";
 static const char Arg_ErrorFactor[] = "--error-factor";
 static const char Arg_AccurateBitCrushing[] = "--accurate-bit-crushing";
@@ -87,6 +133,23 @@ static size_t _ListCount = 1;
 
 int32_t main(const int32_t argc, const char **pArgv)
 {
+  uint8_t buf[8 * 8];
+  static uint8_t total[8 * 8 * 8 * 8];
+
+  for (size_t i = 0; i < 64; i++)
+  {
+    for (size_t j = 0; j < 64; j++)
+      buf[j] = 0;
+
+    buf[i] = 127;
+
+    diffdec_8x8(buf);
+
+    memcpy(total + 64 * i, buf, 64);
+  }
+
+  stbi_write_tga("diff_dec.tga", (int32_t)8, (int32_t)8 * 64, 1, total);
+
   if (argc == 1)
     FAIL(EXIT_SUCCESS, "Usage:\nlimg [<InputFile> | --] [%s | %s <Factor> | %s | %s] \n  if input file is --:\n    [%s <Count>] -- <list of files>)\n", Arg_NoWrite, Arg_ErrorFactor, Arg_AccurateBitCrushing, Arg_SingleThreaded, Arg_ListCount);
 
